@@ -220,11 +220,15 @@ def _adjudicate_claim_groups(
 
 def adjudicate(phase2_outputs: Dict[str, Dict[str, Any]], config: Dict[str, Any]) -> Dict[str, Any]:
     for _model, pack in phase2_outputs.items():
-        validate_reviewer_pack(pack, config)
+        try:
+            validate_reviewer_pack(pack, config)
+        except Exception as e:
+            keys = list(pack.keys()) if isinstance(pack, dict) else f"(not a dict: {type(pack)})"
+            raise RuntimeError(f"Reviewer '{_model}' produced invalid pack. keys={keys}. error={e}") from e
 
-    # Article track
-    waj_by_model = {m: phase2_outputs[m]["whole_article_judgment"] for m in phase2_outputs.keys()}
-    adjudicated_waj = _adjudicate_article_classification(waj_by_model, config)
+        # Article track
+        waj_by_model = {m: phase2_outputs[m]["whole_article_judgment"] for m in phase2_outputs.keys()}
+        adjudicated_waj = _adjudicate_article_classification(waj_by_model, config)
 
     article_track = {
         "whole_article_judgments": waj_by_model,

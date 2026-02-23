@@ -9,6 +9,9 @@
   "reviewers_enabled": ["openai", "gemini", "claude"],
   "adversarial_cross_review": true,
   "cross_review_mode": "structured_only",
+  "verification_enabled": true,
+  "verification_max_claims": 20,
+  "verification_kinds_enabled": ["world_fact", "document_content"],
   "outputs": {
     "main_report": "report.md",
     "run_json": "run.json",

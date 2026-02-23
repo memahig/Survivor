@@ -30,6 +30,7 @@ from engine.core.adjudicator import adjudicate
 from engine.core.validators import validate_run
 from engine.render.report import render_report
 from engine.render.debug_report import render_debug
+from engine.verify.router import run_verification
 
 from engine.reviewers.base import ReviewerInputs
 from engine.reviewers.mock_reviewer import MockReviewer
@@ -156,6 +157,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
         "adjudicated": adjudicated,
     }
 
+    run_state["verification"] = run_verification(run_state, config)
     validate_run(run_state, config)
 
     # ---------------------------

@@ -258,4 +258,48 @@ def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
 
         shown += 1
 
+    lines.append("\n---\n")
+
+    # 6) Authority Verification
+    lines.append("## Authority Verification\n")
+    verification = run_state.get("verification", {})
+    v_enabled = verification.get("enabled", False)
+
+    if not v_enabled:
+        lines.append("- verification_enabled: false (skipped)\n")
+    else:
+        v_results = verification.get("results", [])
+        v_note = verification.get("note")
+
+        if v_note:
+            lines.append(f"- note: {v_note}\n")
+
+        lines.append(f"- results_count: {len(v_results)}\n")
+
+        if v_results:
+            # Count by status
+            status_counts: Dict[str, int] = {}
+            for r in v_results:
+                s = r.get("verification_status", "(missing)")
+                status_counts[s] = status_counts.get(s, 0) + 1
+            lines.append("- status_counts:\n")
+            for s in sorted(status_counts):
+                lines.append(f"  - {s}: {status_counts[s]}\n")
+
+            max_show = int(config.get("verification_max_claims", 20))
+            lines.append(f"\n### Top {min(max_show, len(v_results))} Verification Results\n")
+            for r in v_results[:max_show]:
+                src_count = len(r.get("authority_sources") or [])
+                lines.append(
+                    f"- **{r.get('claim_id')}** ({r.get('claim_kind')}) "
+                    f"| status: **{r.get('verification_status')}** "
+                    f"| confidence: {r.get('confidence')} "
+                    f"| sources: {src_count}\n"
+                )
+                lines.append(f"  - text: {r.get('claim_text')}\n")
+                lines.append(f"  - method: {r.get('method_note')}\n")
+
+            if len(v_results) > max_show:
+                lines.append(f"\n- ... capped at {max_show} verification results\n")
+
     return "".join(lines)

@@ -58,9 +58,9 @@ def _build_reviewers_from_config(config: Dict[str, Any]) -> List[Any]:
     # Registry: config key -> factory producing a reviewer instance
     registry: Dict[str, Callable[[], Any]] = {
         # mocks (safe now)
-        "mock_openai": lambda: MockReviewer("openai"),
-        "mock_gemini": lambda: MockReviewer("gemini"),
-        "mock_claude": lambda: MockReviewer("claude"),
+        "mock_openai": lambda: MockReviewer("mock_openai"),
+        "mock_gemini": lambda: MockReviewer("mock_gemini"),
+        "mock_claude": lambda: MockReviewer("mock_claude"),
         # real (lazy import; safe even if files are stubs until used)
         "openai": lambda: _lazy_import_openai_reviewer()("openai"),
         "gemini": lambda: _lazy_import_gemini_reviewer()("gemini"),

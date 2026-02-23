@@ -1,12 +1,12 @@
 {
   "max_chars": 2400,
   "confidence_weights": { "low": 1, "medium": 2, "high": 3 },
-  "model_weights": { "openai": 1.0, "gemini": 1.0, "claude": 1.0 },
+  "model_weights": { "openai": 1.0, "gemini": 1.0, "claude": 1.0, "mock_openai": 1.0, "mock_gemini": 1.0, "mock_claude": 1.0 },
   "decision_margin": 2,
   "max_claims_per_reviewer": 30,
   "max_near_duplicate_links": 3,
   "near_duplicate_similarity_threshold": 0.92,
-  "reviewers_enabled": ["openai", "mock_gemini", "mock_claude"],
+  "reviewers_enabled": ["openai", "gemini", "claude"],
   "adversarial_cross_review": true,
   "cross_review_mode": "structured_only",
   "outputs": {

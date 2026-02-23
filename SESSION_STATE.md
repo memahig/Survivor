@@ -1,103 +1,119 @@
-# SURVIVOR — SESSION_STATE
-Date: 2026-02-22
-Phase: Multi-Model Activation (Step 4 Complete)
+# SURVIVOR — SESSION_STATE.md
+DATE: 2026-02-22
+PROJECT: Survivor
+PHASE: Engine bring-up / multi-reviewer wiring stabilization
+STATUS: ✅ Pipeline runs end-to-end with OpenAI + Gemini + Mock Claude
 
 ------------------------------------------------------------
-SYSTEM STATUS
+PRIMARY OUTCOME
 ------------------------------------------------------------
+Survivor pipeline now executes successfully end-to-end:
+Ingest → Normalize → EvidenceBank → Phase1 → Cross-Review → Phase2 →
+Adjudication → Validation → Render (report.md + debug.md + run.json + tickets.json)
 
-Survivor execution spine is stable.
-
-Pipeline flow confirmed:
-
-Ingest
-→ Normalize
-→ EvidenceBank
-→ Phase1 (per reviewer)
-→ Cross-Review Payload
-→ Phase2 (per reviewer)
-→ Adjudication
-→ Validation
-→ Outputs
-
-Artifacts generated correctly:
-- out/run.json
-- out/tickets.json
-- out/report.md
-- out/debug.md
-- out/phase2_outputs.json (debug)
-
-Validator passes when ReviewerPack is complete.
+Artifacts confirmed written to out/:
+- debug.md
+- phase2_outputs.json
+- report.md
+- run.json
+- tickets.json
 
 ------------------------------------------------------------
-REVIEWER STATUS
+GEMINI INTEGRATION (KEY EVENTS)
 ------------------------------------------------------------
+1) google.generativeai deprecated → migrated to google-genai (google.genai).
+2) Encountered API key issues:
+   - 403 PERMISSION_DENIED “API key reported as leaked” → generated a new key.
+   - 400 INVALID_ARGUMENT “API key not valid” → corrected key placement/loading.
+   - 429 quota errors → billing/plan adjustments.
+   - 404 model availability: gemini-2.0-flash not available to new users → updated default model to gemini-2.5-flash.
+3) Gemini is now producing Phase2 cross_claim_votes successfully.
 
-OpenAIReviewer:
-- Installed (openai SDK present)
-- API key loading via engine.core.env.get_openai_key()
-- Phase1 + Phase2 working
-- Phase2 correctly merges into Phase1 base pack
-- Produces full ReviewerPack (passes validators)
-
-Gemini:
-- GEMINI_API_KEY verified via engine.core.env.get_gemini_key()
-- SDK not yet wired
-- Reviewer file not yet implemented
-
-Claude:
-- Not yet implemented
-
-Config currently:
-"reviewers_enabled": ["openai", "mock_gemini", "mock_claude"]
+Security note:
+- DO NOT print or log API keys (confirmed).
 
 ------------------------------------------------------------
-ARCHITECTURAL STATE
+REVIEWER WIRING & IDENTITIES (IMPORTANT LOCK)
 ------------------------------------------------------------
+Config now controls expected reviewers:
+engine/core/config.json
+  "reviewers_enabled": ["openai", "gemini", "mock_claude"]
 
-✔ Config-driven reviewer wiring (no hardcoded reviewer list)
-✔ Lazy reviewer imports (safe until selected)
-✔ Deterministic adjudication layer
-✔ Stable ticket IDs (T-CLAIM-G###)
-✔ Fail-closed validator enforcement
-✔ .env-based key loading (no fallbacks to secrets)
+Pipeline phase2 keys now match config reviewers_enabled:
+- phase2 keys: ['openai', 'gemini', 'mock_claude']
 
-------------------------------------------------------------
-NEXT STEP (WHEN RESUMING)
-------------------------------------------------------------
-
-Step 5 — Implement GeminiReviewer
-
-- Create engine/reviewers/gemini_reviewer.py
-- Mirror OpenAIReviewer structure
-- Replace client + _call_json()
-- Enable in config:
-  ["openai", "gemini", "mock_claude"]
-- Run fixture
-- Confirm full ReviewerPack from Gemini
-
-After Gemini:
-Step 6 — ClaudeReviewer
-Step 7 — Preliminary 3-model consolidated report layer
+No Claude SDK installed (anthropic not present) and no Claude API key.
+Claude remains mock_claude for now.
 
 ------------------------------------------------------------
-KNOWN STABLE BASELINE
+CLAIM ID UNIQUENESS FIX (CRITICAL)
 ------------------------------------------------------------
+Problem:
+- Adjudicator required globally unique claim_id across reviewers.
+- Collision observed (e.g., Gemini emitted "C1" and another reviewer also emitted "C1").
 
-Last successful run command:
+Fix:
+- Implemented claim_id prefixing for Gemini (and then OpenAI as well).
+- Verified with run.json: all claim_ids unique.
 
-python3 scripts/run_survivor.py \
-  --textfile engine/tests/fixtures/sample_article.txt \
-  --outdir out
+Example result:
+- openai-C1
+- gemini-C1
+- mock_claude-CL-01
+- mock_claude-CL-02
 
-System confirmed stable at this commit state.
+Also ensured references are rewritten consistently when prefixing:
+- causal_links (from_claim_id/to_claim_id)
+- counterfactual_requirements (target_claim_id)
+- cross_claim_votes (claim_id, near_duplicate_of)
 
 ------------------------------------------------------------
-IMPORTANT PRINCIPLE
+VALIDATION & RENDERING UPGRADES
 ------------------------------------------------------------
+Validators:
+- validate_run now requires reviewers based on config.reviewers_enabled
+  (not hardcoded openai/gemini/claude).
+- Still fail-closed.
+- EID integrity enforcement remains (no phantom evidence_eids).
 
-Survivor is now:
-A structured multi-LLM epistemic arbitration engine.
+Renderer (engine/render/report.py):
+- Updated to iterate over sorted(phase2.keys()) everywhere instead of hardcoding reviewers.
+- Added "Disagreement Radar" section driven by claim-group tallies.
+- Disagreement score now uses adjudicator tally keys:
+  supported_votes / unsupported_votes / undetermined_votes
+- Vote line renders per reviewer using reviewer_votes[model].vote when dict.
 
-Do not modify architecture during reviewer expansion.
-Only implement reviewers to existing contract.
+------------------------------------------------------------
+CURRENT “KNOWN GOOD” TEST COMMANDS
+------------------------------------------------------------
+Run:
+python3 scripts/run_survivor.py --textfile engine/tests/fixtures/sample_article.txt --outdir out
+
+Inspect:
+python -c "import json; d=json.load(open('out/run.json')); print('phase2 keys:', list(d['phase2'].keys()))"
+python -c "import json; d=json.load(open('out/run.json')); ids=[]; [ids.extend([c.get('claim_id') for c in d['phase2'][m].get('claims',[]) if isinstance(c,dict)]) for m in d['phase2'].keys()]; ids=[i for i in ids if isinstance(i,str)]; print('unique_claim_ids:', len(set(ids)), 'total:', len(ids))"
+grep -n "Reviewer Whole-Article Judgments" -n -A20 out/report.md
+
+------------------------------------------------------------
+OPEN ITEMS / NEXT STEPS
+------------------------------------------------------------
+1) Consider normalizing “model_weights” handling for mock reviewers:
+   - Ensure adjudicator weight lookup matches reviewer names in phase2
+   - Keep fail-closed behavior where appropriate, but avoid “Unknown model” surprises.
+
+2) Decide how we want to treat "mock_*" names long-term:
+   - Option A: keep reviewer.name as "mock_claude" everywhere (current).
+   - Option B: keep reviewer.name as "claude" but mark as mock via metadata.
+   (Current system uses reviewer.name directly as the key in phase outputs.)
+
+3) Optional: add a tiny “run header” section into report.md:
+   - reviewers_enabled list
+   - model versions / selected models
+   - config snapshot hash or excerpt
+
+------------------------------------------------------------
+DO-NOT-DO (GUARDS)
+------------------------------------------------------------
+- Do not print API keys.
+- Do not hardcode reviewer lists in renderer or validators (must be config-driven).
+- Claim IDs must remain globally unique across reviewers (keep prefixing).

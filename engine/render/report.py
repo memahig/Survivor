@@ -21,6 +21,30 @@ def _md_list(items: List[str]) -> str:
     return "".join([f"- {x}\n" for x in items])
 
 
+def _vote_symbol(v: str) -> str:
+    # stable, compact rendering
+    if v == "supported":
+        return "✅ supported"
+    if v == "unsupported":
+        return "❌ unsupported"
+    if v == "undetermined":
+        return "❓ undetermined"
+    return f"• {v}"
+
+
+def _disagreement_score(tally: Dict[str, Any]) -> int:
+    """
+    Higher = more disagreement.
+    Uses arena.tally keys produced by adjudicator:
+      supported_votes / unsupported_votes / undetermined_votes
+    """
+    if not isinstance(tally, dict):
+        return 0
+    s = int(tally.get("supported_votes", 0) or 0)
+    u = int(tally.get("unsupported_votes", 0) or 0)
+    d = int(tally.get("undetermined_votes", 0) or 0)
+    return (min(s, u) * 3) + d
+
 def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
     article = run_state.get("article", {})
     adjudicated = run_state.get("adjudicated", {})
@@ -66,7 +90,7 @@ def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
     lines.append(f"- evidence_eids: {adjud_waj.get('evidence_eids', [])}\n")
 
     lines.append("\n### Reviewer Whole-Article Judgments\n")
-    for model in ("openai", "gemini", "claude"):
+    for model in sorted(phase2.keys()):
         pack = phase2.get(model, {})
         waj = pack.get("whole_article_judgment", {})
         cls = waj.get("classification", "(missing)")
@@ -78,7 +102,7 @@ def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
 
     # 2) Major Claims (by model, v0)
     lines.append("## Major Claims (by reviewer, v0)\n")
-    for model in ("openai", "gemini", "claude"):
+    for model in sorted(phase2.keys()):
         pack = phase2.get(model, {})
         claims = pack.get("claims", [])
         lines.append(f"### {model}\n")
@@ -109,6 +133,57 @@ def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
             lines.append(f"  - reviewer_votes: {g.get('reviewer_votes')}\n")
             lines.append(f"  - tally: {g.get('tally')}\n")
 
+    lines.append("\n---\n")
+    lines.append("## Disagreement Radar (claim groups, v0.7)\n")
+
+    if not claims:
+        lines.append("- (none)\n")
+    else:
+        # Sort by disagreement score, then group_id for stability
+        scored = []
+        for g in claims:
+            scored.append((-_disagreement_score(g.get("tally", {})), str(g.get("group_id", "")), g))
+        scored.sort()
+
+        max_show = 15  # v0.7 cap
+        shown = 0
+
+        for _neg_score, _gid, g in scored:
+            if shown >= max_show:
+                lines.append(f"\n- ... capped at top {max_show} disagreement groups (v0.7)\n")
+                break
+
+            tally = g.get("tally", {})
+            rv = g.get("reviewer_votes", {}) or {}
+            if not isinstance(rv, dict):
+                rv = {}
+
+            # Only show if there is meaningful disagreement
+            score = _disagreement_score(tally)
+            if score <= 0:
+                continue
+
+            lines.append(
+                f"- **group_id:** {g.get('group_id')} | adjudication: **{g.get('adjudication')}** | disagreement_score: **{score}**\n"
+            )
+            lines.append(f"  - text: {g.get('text')}\n")
+            lines.append(f"  - members: {g.get('member_claim_ids')}\n")
+            lines.append(f"  - evidence_eids: {g.get('evidence_eids')}\n")
+            lines.append(f"  - tally: {tally}\n")
+
+            # Per-reviewer vote line (stable order)
+            for model in sorted(phase2.keys()):
+                vv = rv.get(model)
+                vote_str = vv.get("vote") if isinstance(vv, dict) else vv
+                lines.append(f"  - {model}: {_vote_symbol(str(vote_str) if vote_str is not None else '(missing)')}\n")
+
+            shown += 1
+
+        if shown == 0:
+            lines.append("- (none)\n")
+
+    lines.append("\n---\n")
+
     # 3) Structured Disagreements (article track)
     lines.append("## Structured Disagreements (article track)\n")
     disag = adjudicated.get("article_track", {}).get("adjudicated_whole_article_judgment", {}).get("disagreements", [])
@@ -120,9 +195,9 @@ def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
 
     lines.append("\n---\n")
 
-    # 4) Counterfactual Requirements (by model)
+    # 4) Counterfactual Requirements (by reviewer)
     lines.append("## Counterfactual Evidence Requirements (by reviewer)\n")
-    for model in ("openai", "gemini", "claude"):
+    for model in sorted(phase2.keys()):
         pack = phase2.get(model, {})
         cfs = pack.get("counterfactual_requirements", [])
         lines.append(f"### {model}\n")

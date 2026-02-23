@@ -128,8 +128,16 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
     if bad:
         raise RuntimeError(f"EID integrity failure: referenced but not in EvidenceBank: {bad}")
 
-    # Require all three reviewers in v0
-    for name in ("openai", "gemini", "claude"):
+    # Require reviewers based on config (fail-closed)
+    enabled = config.get("reviewers_enabled", [])
+    _require(isinstance(enabled, list) and len(enabled) > 0, "config.reviewers_enabled must be a non-empty list")
+
+    expected = []
+    for x in enabled:
+        _require(isinstance(x, str) and x.strip(), "config.reviewers_enabled entries must be non-empty strings")
+        expected.append(x.strip())
+
+    for name in expected:
         _require(name in phase2, f"phase2 missing reviewer output: {name}")
         validate_reviewer_pack(phase2[name], config)
 

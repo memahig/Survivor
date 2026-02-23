@@ -168,6 +168,57 @@ ARTICLE (normalized text):
         return data
 
     # ----------------------------
+    # Claim-id normalization
+    # ----------------------------
+    def _prefix_claim_ids(self, pack: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Ensure claim_id values are globally unique by prefixing with reviewer name
+        unless they already start with '<name>-'.
+
+        Also rewrites references in:
+          - causal_links (from_claim_id/to_claim_id)
+          - counterfactual_requirements (target_claim_id)
+          - cross_claim_votes (claim_id, near_duplicate_of)
+        """
+        claims = pack.get("claims", [])
+        if not isinstance(claims, list):
+            return pack
+
+        id_map: Dict[str, str] = {}
+        for c in claims:
+            if not isinstance(c, dict):
+                continue
+            cid = c.get("claim_id")
+            if not isinstance(cid, str) or not cid:
+                continue
+
+            if cid.startswith(f"{self.name}-"):
+                id_map[cid] = cid
+                continue
+
+            new_id = f"{self.name}-{cid}"
+            id_map[cid] = new_id
+            c["claim_id"] = new_id
+
+        def _remap(x: Any) -> Any:
+            if isinstance(x, str):
+                return id_map.get(x, x)
+            if isinstance(x, list):
+                return [_remap(i) for i in x]
+            if isinstance(x, dict):
+                return {k: _remap(v) for k, v in x.items()}
+            return x
+
+        if "causal_links" in pack:
+            pack["causal_links"] = _remap(pack["causal_links"])
+        if "counterfactual_requirements" in pack:
+            pack["counterfactual_requirements"] = _remap(pack["counterfactual_requirements"])
+        if "cross_claim_votes" in pack:
+            pack["cross_claim_votes"] = _remap(pack["cross_claim_votes"])
+
+        return pack
+
+    # ----------------------------
     # Public API
     # ----------------------------
     def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
@@ -175,8 +226,8 @@ ARTICLE (normalized text):
 
         # Enforce reviewer name + Phase1 invariant
         out["reviewer"] = self.name
-        out["cross_claim_votes"] = []  # Phase 1 must be empty list
-
+        out["cross_claim_votes"] = []
+        out = self._prefix_claim_ids(out)
         return out
 
     def run_phase2(self, inp: ReviewerInputs, cross_review_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -216,8 +267,10 @@ ARTICLE (normalized text):
         # Always enforce reviewer name
         merged["reviewer"] = self.name
 
-        # If Phase2 forgot to include cross_claim_votes, keep Phase1’s (usually empty)
         if "cross_claim_votes" not in merged:
             merged["cross_claim_votes"] = my_phase1.get("cross_claim_votes", [])
+
+        # Ensure claim IDs stay prefixed if Phase2 re-emits claims
+        merged = self._prefix_claim_ids(merged)
 
         return merged

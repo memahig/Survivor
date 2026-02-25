@@ -23,6 +23,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from engine.reviewers.base import ReviewerInputs
+from engine.prompts.builder import build_system_prompt
 
 
 class OpenAIReviewer:
@@ -139,14 +140,14 @@ ARTICLE (normalized text):
     # ----------------------------
     # JSON call helper
     # ----------------------------
-    def _call_json(self, prompt: str) -> Dict[str, Any]:
+    def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
         client = self._get_openai_client()
         try:
             resp = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "Return only strict JSON. No markdown. No commentary."},
-                    {"role": "user", "content": prompt},
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.0,
             )
@@ -222,7 +223,8 @@ ARTICLE (normalized text):
     # Public API
     # ----------------------------
     def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
-        out = self._call_json(self._phase1_prompt(inp))
+        system_prompt = build_system_prompt("judge", "machine")
+        out = self._call_json(system_prompt, self._phase1_prompt(inp))
 
         # Enforce reviewer name + Phase1 invariant
         out["reviewer"] = self.name
@@ -234,8 +236,8 @@ ARTICLE (normalized text):
         phase1_all = cross_review_payload["phase1_outputs"]
         my_phase1 = phase1_all[self.name]
 
-        # Phase2 model output (often only cross_claim_votes + reviewer)
-        phase2_out = self._call_json(self._phase2_prompt(inp, cross_review_payload))
+        system_prompt = build_system_prompt("judge", "machine")
+        phase2_out = self._call_json(system_prompt, self._phase2_prompt(inp, cross_review_payload))
 
         if not isinstance(phase2_out, dict):
             raise RuntimeError(f"{self.name} Phase2 returned non-dict: {type(phase2_out)}")

@@ -22,6 +22,7 @@ import json
 from typing import Any, Dict
 
 from engine.reviewers.base import ReviewerInputs
+from engine.prompts.builder import build_system_prompt
 
 
 class GeminiReviewer:
@@ -191,32 +192,37 @@ ARTICLE (normalized text):
     # ----------------------------
     # JSON call helper
     # ----------------------------
-    def _call_json(self, prompt: str) -> Dict[str, Any]:
+    def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
         client = self._get_client()
 
-        # Prefer JSON response MIME type when available; still fail closed on parse.
+        # Prefer system_instruction + JSON MIME type when SDK supports it.
+        # Fall back to prepending the system contract to the user content.
         try:
             from google.genai import types  # type: ignore
             cfg = types.GenerateContentConfig(
                 temperature=0.0,
                 response_mime_type="application/json",
+                system_instruction=system_prompt,
             )
+            contents = user_prompt
         except Exception:
             cfg = None
-
-        full_prompt = "Return only strict JSON. No markdown. No commentary.\n\n" + prompt
+            # Old SDK / unsupported system_instruction: prepend contract with separator.
+            contents = (
+                f"[SYSTEM CONTRACT]\n{system_prompt}\n[/SYSTEM CONTRACT]\n\n{user_prompt}"
+            )
 
         try:
             if cfg is not None:
                 resp = client.models.generate_content(
                     model=self.model,
-                    contents=full_prompt,
+                    contents=contents,
                     config=cfg,
                 )
             else:
                 resp = client.models.generate_content(
                     model=self.model,
-                    contents=full_prompt,
+                    contents=contents,
                 )
         except Exception as e:
             raise RuntimeError(f"Gemini call failed: {e}")
@@ -239,7 +245,8 @@ ARTICLE (normalized text):
     # Public API
     # ----------------------------
     def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
-        out = self._call_json(self._phase1_prompt(inp))
+        system_prompt = build_system_prompt("judge", "machine")
+        out = self._call_json(system_prompt, self._phase1_prompt(inp))
         out["reviewer"] = self.name
         out["cross_claim_votes"] = []  # Phase 1 must be empty list
         out = self._prefix_claim_ids(out)
@@ -249,7 +256,8 @@ ARTICLE (normalized text):
         phase1_all = cross_review_payload["phase1_outputs"]
         my_phase1 = phase1_all[self.name]
 
-        phase2_out = self._call_json(self._phase2_prompt(inp, cross_review_payload))
+        system_prompt = build_system_prompt("judge", "machine")
+        phase2_out = self._call_json(system_prompt, self._phase2_prompt(inp, cross_review_payload))
         if not isinstance(phase2_out, dict):
             raise RuntimeError(f"{self.name} Phase2 returned non-dict: {type(phase2_out)}")
 

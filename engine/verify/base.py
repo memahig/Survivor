@@ -1,110 +1,100 @@
 #!/usr/bin/env python3
 """
 FILE: engine/verify/base.py
-VERSION: 0.2
+VERSION: 0.3
 PURPOSE:
-Types and constants for the Authority Verification layer.
+Canonical verification interface layer for the Survivor pipeline.
 
-Separates:
-  Document Authority  — what does the document say?  (verbatim quote + locator)
-  World Authority     — is it true in the world?      (external authority check)
+Provides the enums, constants, and a minimal authority-source validator
+used by engine/core/validators.py when verification_enabled=True.
 
-VerificationResult is the canonical output of any verifier.
-VerificationPack is the return type of run_verification().
+CONTRACT:
+- No provider adapters, web calls, or I/O of any kind.
+- No optional imports, no side effects on import.
+- Import-safe from any context; always available at runtime.
+- Enums are frozensets; membership checks are O(1).
+- validate_authority_source() raises RuntimeError (fail-closed).
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, TypedDict
+from typing import Any, Dict, FrozenSet
 
 
 # ---------------------------------------------------------------------------
-# Enums / Literals
+# Claim kinds
 # ---------------------------------------------------------------------------
 
-Confidence = Literal["low", "medium", "high"]
-
-CONFIDENCE_VALUES: frozenset[Confidence] = frozenset({"low", "medium", "high"})
-
-ClaimKind = Literal["document_content", "world_fact"]
-
-CLAIM_KINDS: frozenset[ClaimKind] = frozenset({"document_content", "world_fact"})
-
-Checkability = Literal["checkable", "uncheckable", "unknown"]
-
-CHECKABILITY_VALUES: frozenset[Checkability] = frozenset({"checkable", "uncheckable", "unknown"})
-
-VerificationStatus = Literal[
-    "verified_true",
-    "verified_false",
-    "conflicted_sources",
-    "not_verifiable",
-    "not_checked_yet",
-]
-
-VERIFICATION_STATUSES: frozenset[VerificationStatus] = frozenset({
-    "verified_true",
-    "verified_false",
-    "conflicted_sources",
-    "not_verifiable",
-    "not_checked_yet",
+CLAIM_KINDS: FrozenSet[str] = frozenset({
+    "factual",
+    "numerical",
+    "causal",
+    "attribution",
+    "timeline",
 })
 
-SourceType = Literal[
-    "document",
-    "web_page",
-    "database",
-    "law_record",
-    "journal_article",
-    "book",
-    "dataset",
-    "other",
-]
 
-SOURCE_TYPES: frozenset[SourceType] = frozenset({
-    "document",
-    "web_page",
+# ---------------------------------------------------------------------------
+# Verification statuses
+# ---------------------------------------------------------------------------
+
+VERIFICATION_STATUSES: FrozenSet[str] = frozenset({
+    "verified_true",
+    "verified_false",
+    "mixed_or_partial",
+    "conflicted_sources",
+    "insufficient_evidence",
+    "not_checked_yet",
+    "not_verifiable",
+})
+
+
+# ---------------------------------------------------------------------------
+# Source types
+# ---------------------------------------------------------------------------
+
+SOURCE_TYPES: FrozenSet[str] = frozenset({
+    "web",
+    "gov",
+    "academic",
+    "news",
+    "organization",
     "database",
-    "law_record",
-    "journal_article",
-    "book",
-    "dataset",
     "other",
 })
 
 
 # ---------------------------------------------------------------------------
-# AuthoritySource
+# Confidence values (verification layer — uppercase; distinct from reviewer
+# pack confidence which uses lowercase via schema_constants.CONFIDENCE_VALUES)
 # ---------------------------------------------------------------------------
 
-class AuthoritySource(TypedDict, total=False):
-    source_id: str
-    source_type: SourceType
-    title: str
-    locator: str        # paragraph ref, URL fragment, page number
-    url: str            # optional
-
-
-# ---------------------------------------------------------------------------
-# VerificationResult
-# ---------------------------------------------------------------------------
-
-class VerificationResult(TypedDict):
-    claim_id: str       # adjudicated claim group_id (G###), not member_claim_id
-    claim_text: str
-    claim_kind: ClaimKind
-    verification_status: VerificationStatus
-    confidence: Confidence
-    authority_sources: List[AuthoritySource]    # may be [] ONLY if not_checked_yet
-    method_note: str
-    checked_at: str                             # ISO 8601 UTC timestamp
+CONFIDENCE_VALUES: FrozenSet[str] = frozenset({
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+})
 
 
 # ---------------------------------------------------------------------------
-# VerificationPack — return type of run_verification()
+# Authority source validator
 # ---------------------------------------------------------------------------
 
-class VerificationPack(TypedDict, total=False):
-    enabled: bool
-    results: List[VerificationResult]
-    note: str           # present only when enabled=True and results=[]
+def validate_authority_source(src: Dict[str, Any]) -> None:
+    """
+    Fail-closed validator for a single authority source dict.
+    Raises RuntimeError on any violation.
+    """
+    if not isinstance(src, dict):
+        raise RuntimeError("authority_source must be a dict")
+
+    src_type = src.get("source_type")
+    if src_type not in SOURCE_TYPES:
+        raise RuntimeError(f"authority_source.source_type invalid: {src_type!r}")
+
+    has_locator = isinstance(src.get("locator"), str) and bool(src["locator"].strip())
+    has_url = isinstance(src.get("url"), str) and bool(src["url"].strip())
+    if not (has_locator or has_url):
+        raise RuntimeError(
+            "authority_source must have a non-empty locator or url"
+        )

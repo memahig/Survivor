@@ -23,6 +23,11 @@ from typing import Any, Dict, List, Tuple
 
 from engine.core.validators import validate_reviewer_pack
 from engine.core.voting import build_equivalence_groups, group_members, tally_reviewer_votes, decide_status
+from engine.core.claim_classifier import (
+    classify_claim_kind,
+    compute_checkability,
+    extract_source_doc_hint,
+)
 
 
 def _conf_weight(conf: str, config: Dict[str, Any]) -> float:
@@ -190,26 +195,36 @@ def _adjudicate_claim_groups(
             for eid in claim_index[cid].get("evidence_eids", []):
                 eids_set.add(eid)
 
-        adjudicated_claims.append(
-            {
-                "group_id": f"G{len(adjudicated_claims)+1:03d}",   # canonical representative
-                "member_claim_ids": members,     # all merged ids
-                "representative_claim_id": rep_id,
-                "text": rep_claim.get("text"),
-                "type": rep_claim.get("type"),
-                "centrality": rep_claim.get("centrality"),
-                "evidence_eids": sorted(eids_set),
-                "reviewer_votes": reviewer_votes,
-                "tally": {
-                    "supported_score": tally.supported_score,
-                    "unsupported_score": tally.unsupported_score,
-                    "supported_votes": tally.supported_votes,
-                    "unsupported_votes": tally.unsupported_votes,
-                    "undetermined_votes": tally.undetermined_votes,
-                },
-                "adjudication": status,          # kept|rejected|downgraded
-            }
-        )
+        _claim_text = rep_claim.get("text") or ""
+        _kind = classify_claim_kind(_claim_text)
+        _checkability = compute_checkability(_claim_text, _kind)
+
+        group: Dict[str, Any] = {
+            "group_id": f"G{len(adjudicated_claims)+1:03d}",   # canonical representative
+            "member_claim_ids": members,     # all merged ids
+            "representative_claim_id": rep_id,
+            "text": rep_claim.get("text"),
+            "type": rep_claim.get("type"),
+            "centrality": rep_claim.get("centrality"),
+            "claim_kind": _kind,
+            "checkability": _checkability,
+            "evidence_eids": sorted(eids_set),
+            "reviewer_votes": reviewer_votes,
+            "tally": {
+                "supported_score": tally.supported_score,
+                "unsupported_score": tally.unsupported_score,
+                "supported_votes": tally.supported_votes,
+                "unsupported_votes": tally.unsupported_votes,
+                "undetermined_votes": tally.undetermined_votes,
+            },
+            "adjudication": status,          # kept|rejected|downgraded
+        }
+
+        _hint = extract_source_doc_hint(_claim_text) if _kind == "document_content" else None
+        if _hint is not None:
+            group["source_doc_hint"] = _hint
+
+        adjudicated_claims.append(group)
 
     return {
         "edges": edges,

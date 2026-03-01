@@ -1,119 +1,89 @@
-# SURVIVOR — SESSION_STATE.md
-DATE: 2026-02-22
-PROJECT: Survivor
-PHASE: Engine bring-up / multi-reviewer wiring stabilization
-STATUS: ✅ Pipeline runs end-to-end with OpenAI + Gemini + Mock Claude
+# SESSION_STATE — SURVIVOR (Post GSAE Phase 2)
+DATE: 2026-03-01
+PHASE: GSAE Phase 2 Complete / Integration Wiring Pending
+STATUS: CLEAN STOPPING POINT
 
 ------------------------------------------------------------
 PRIMARY OUTCOME
 ------------------------------------------------------------
-Survivor pipeline now executes successfully end-to-end:
-Ingest → Normalize → EvidenceBank → Phase1 → Cross-Review → Phase2 →
-Adjudication → Validation → Render (report.md + debug.md + run.json + tickets.json)
 
-Artifacts confirmed written to out/:
-- debug.md
-- phase2_outputs.json
-- report.md
-- run.json
-- tickets.json
+GSAE Tier C implementation complete (Tasks 1-8).
+All code locked, tested, committed. 249 tests passing.
 
-------------------------------------------------------------
-GEMINI INTEGRATION (KEY EVENTS)
-------------------------------------------------------------
-1) google.generativeai deprecated → migrated to google-genai (google.genai).
-2) Encountered API key issues:
-   - 403 PERMISSION_DENIED “API key reported as leaked” → generated a new key.
-   - 400 INVALID_ARGUMENT “API key not valid” → corrected key placement/loading.
-   - 429 quota errors → billing/plan adjustments.
-   - 404 model availability: gemini-2.0-flash not available to new users → updated default model to gemini-2.5-flash.
-3) Gemini is now producing Phase2 cross_claim_votes successfully.
-
-Security note:
-- DO NOT print or log API keys (confirmed).
+Commit chain:
+- 7679032 Tasks 1-3 (skeleton + schemas + constants)
+- 70a2f71 Task 4 (fail-closed validators)
+- 5a4f566 Task 5 (config.json gsae_settings)
+- d04c50d Tasks 6-7 (test suite — 53 tests)
+- 1f4c56a Task 8 (compute_symmetry implementation + 15 behavioral tests)
 
 ------------------------------------------------------------
-REVIEWER WIRING & IDENTITIES (IMPORTANT LOCK)
+COMPLETED IMPLEMENTATION TASKS
 ------------------------------------------------------------
-Config now controls expected reviewers:
-engine/core/config.json
-  "reviewers_enabled": ["openai", "gemini", "mock_claude"]
 
-Pipeline phase2 keys now match config reviewers_enabled:
-- phase2 keys: ['openai', 'gemini', 'mock_claude']
-
-No Claude SDK installed (anthropic not present) and no Claude API key.
-Claude remains mock_claude for now.
-
-------------------------------------------------------------
-CLAIM ID UNIQUENESS FIX (CRITICAL)
-------------------------------------------------------------
-Problem:
-- Adjudicator required globally unique claim_id across reviewers.
-- Collision observed (e.g., Gemini emitted "C1" and another reviewer also emitted "C1").
-
-Fix:
-- Implemented claim_id prefixing for Gemini (and then OpenAI as well).
-- Verified with run.json: all claim_ids unique.
-
-Example result:
-- openai-C1
-- gemini-C1
-- mock_claude-CL-01
-- mock_claude-CL-02
-
-Also ensured references are rewritten consistently when prefixing:
-- causal_links (from_claim_id/to_claim_id)
-- counterfactual_requirements (target_claim_id)
-- cross_claim_votes (claim_id, near_duplicate_of)
+1. engine/eo/genre_alignment.py v0.2 — compute_symmetry()
+2. GSAESymmetryPacket / GSAESettings / GSAESymmetryArtifact in schemas.py
+3. GSAE constants + required-key sets in schema_constants.py
+4. Fail-closed GSAE validators in validators.py
+5. gsae_settings block in config.json
+6. tests/test_genre_alignment.py — 66 tests (validators + config + behavior)
+7. Full suite: 249 passing, zero failures
+8. compute_symmetry() — field distances, weighted delta, zone classification
 
 ------------------------------------------------------------
-VALIDATION & RENDERING UPGRADES
+TIER C INVARIANTS (LOCKED)
 ------------------------------------------------------------
-Validators:
-- validate_run now requires reviewers based on config.reviewers_enabled
-  (not hardcoded openai/gemini/claude).
-- Still fail-closed.
-- EID integrity enforcement remains (no phantom evidence_eids).
 
-Renderer (engine/render/report.py):
-- Updated to iterate over sorted(phase2.keys()) everywhere instead of hardcoding reviewers.
-- Added "Disagreement Radar" section driven by claim-group tallies.
-- Disagreement score now uses adjudicator tally keys:
-  supported_votes / unsupported_votes / undetermined_votes
-- Vote line renders per reviewer using reviewer_votes[model].vote when dict.
+Symmetry model:
+- Post-extraction only
+- Deterministic swap transform
+- Field-scoped calibrated quarantine
+- No natural-language hypothetical swaps
+- No weight manipulation via soft flags
+- epsilon (noise floor) + tau (contamination threshold)
+- Scoped UNKNOWN on contaminated fields only
 
-------------------------------------------------------------
-CURRENT “KNOWN GOOD” TEST COMMANDS
-------------------------------------------------------------
-Run:
-python3 scripts/run_survivor.py --textfile engine/tests/fixtures/sample_article.txt --outdir out
+soft_symmetry_flag:
+- Audit-only
+- Non-load-bearing
+- Cannot influence adjudication
 
-Inspect:
-python -c "import json; d=json.load(open('out/run.json')); print('phase2 keys:', list(d['phase2'].keys()))"
-python -c "import json; d=json.load(open('out/run.json')); ids=[]; [ids.extend([c.get('claim_id') for c in d['phase2'][m].get('claims',[]) if isinstance(c,dict)]) for m in d['phase2'].keys()]; ids=[i for i in ids if isinstance(i,str)]; print('unique_claim_ids:', len(set(ids)), 'total:', len(ids))"
-grep -n "Reviewer Whole-Article Judgments" -n -A20 out/report.md
+Tier hierarchy:
+Tier A — Structural Validity (fail-closed)
+Tier C — Symmetry (calibrated, scoped quarantine)
+Tier B — Weighted Consensus (operates on clean fields only)
+Tier D — Deferred
 
-------------------------------------------------------------
-OPEN ITEMS / NEXT STEPS
-------------------------------------------------------------
-1) Consider normalizing “model_weights” handling for mock reviewers:
-   - Ensure adjudicator weight lookup matches reviewer names in phase2
-   - Keep fail-closed behavior where appropriate, but avoid “Unknown model” surprises.
-
-2) Decide how we want to treat "mock_*" names long-term:
-   - Option A: keep reviewer.name as "mock_claude" everywhere (current).
-   - Option B: keep reviewer.name as "claude" but mark as mock via metadata.
-   (Current system uses reviewer.name directly as the key in phase outputs.)
-
-3) Optional: add a tiny “run header” section into report.md:
-   - reviewers_enabled list
-   - model versions / selected models
-   - config snapshot hash or excerpt
+Symmetry overrides consensus at the field level.
+Consensus never rescues contaminated fields.
 
 ------------------------------------------------------------
-DO-NOT-DO (GUARDS)
+NEXT: PHASE 3 — INTEGRATION WIRING
 ------------------------------------------------------------
-- Do not print API keys.
-- Do not hardcode reviewer lists in renderer or validators (must be config-driven).
-- Claim IDs must remain globally unique across reviewers (keep prefixing).
+
+1. Lock run_state["gsae"] shape (optional, validator-gated)
+2. Create packet generation module (engine/eo/gsae_packets.py)
+3. Wire call site in pipeline.py (post-Phase2, pre-adjudication)
+4. Quarantine application adapter (engine/eo/gsae_apply.py)
+5. Wire legacy→hardened migration (adjudicator→judge, render→generator)
+
+------------------------------------------------------------
+KNOWN NOTES
+------------------------------------------------------------
+
+- classification_bucket vocabulary remains distinct from ArticleClassification
+- intent_level vocabulary TBD (marked in schema docstrings)
+- judge.py must later support partially UNKNOWN field adjudication
+- epsilon and tau are calibration variables, not moral constants
+- pipeline.py v0.3 still uses legacy adjudicator + render modules
+
+------------------------------------------------------------
+PHILOSOPHY LOCK
+------------------------------------------------------------
+
+System optimizes for epistemic integrity, not stability.
+Constrained divergence allowed.
+Symmetry is a purity test, not a reliability signal.
+Drift flags are structural and audit-only.
+
+END SESSION_STATE

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-tests/test_genre_alignment.py — GSAE Tier C validation + skeleton tests
+tests/test_genre_alignment.py — GSAE Tier C validation + compute_symmetry tests
 
-Task 6: validator stress tests, config integrity, skeleton smoke test.
-No symmetry math tested (compute_symmetry is still NotImplementedError).
+Tasks 6-8: validator stress tests, config integrity, symmetry computation.
 
 Uses real schema_constants + real validators (no mocks).
 Assertion rule: RuntimeError messages must start with validator function name.
@@ -22,6 +21,7 @@ from engine.core.validators import (
     _validate_gsae_symmetry_artifact,
     _validate_gsae_symmetry_packet,
 )
+from engine.eo.genre_alignment import compute_symmetry
 
 
 # ---------------------------------------------------------------------------
@@ -478,21 +478,188 @@ class TestConfigIntegrity:
 
 
 # ===================================================================
-# GROUP C — Skeleton smoke test
+# GROUP C — compute_symmetry behavior tests
 # ===================================================================
 
 
-class TestSkeletonSmoke:
+class TestComputeSymmetry:
 
-    def test_compute_symmetry_raises_not_implemented(self):
-        from engine.eo.genre_alignment import compute_symmetry
+    def test_identical_packets_pass(self):
+        """Identical packets → delta=0.0, PASS, no flags, no quarantine."""
+        result = compute_symmetry(_valid_packet(), _valid_packet(), _valid_settings())
+        assert result["symmetry_status"] == "PASS"
+        assert result["delta"] == 0.0
+        assert result["soft_symmetry_flag"] is False
+        assert result["quarantine_fields"] == []
+        assert result["notes"] == []
+        # All field deltas should be 0.0
+        for f, d in result["field_deltas"].items():
+            assert d == 0.0, f"field {f} should be 0.0"
 
+    def test_severity_tier_shift_soft_flag(self):
+        """severity_tier "moderate"→"critical" (3-step ordinal shift) → SOFT_FLAG.
+
+        d_f = 3/4 = 0.75; delta = 0.2*0.75 / 1.0 = 0.15
+        epsilon=0.1, tau=0.25 → 0.1 < 0.15 < 0.25 → SOFT_FLAG
+        """
+        pkt_b = _valid_packet()
+        pkt_b["severity_tier"] = "critical"
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["symmetry_status"] == "SOFT_FLAG"
+        assert result["delta"] == 0.15
+        assert result["soft_symmetry_flag"] is True
+        assert result["quarantine_fields"] == []
+        assert result["field_deltas"]["severity_tier"] == 0.75
+
+    def test_classification_bucket_flip_quarantine(self):
+        """classification_bucket "reporting"→"normative" → QUARANTINE.
+
+        d_f = 1.0 (categorical); delta = 0.25*1.0 / 1.0 = 0.25
+        0.25 >= tau(0.25) → QUARANTINE
+        """
+        pkt_b = _valid_packet()
+        pkt_b["classification_bucket"] = "normative"
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["symmetry_status"] == "QUARANTINE"
+        assert result["delta"] == 0.25
+        assert result["soft_symmetry_flag"] is True
+        assert result["quarantine_fields"] == ["classification_bucket"]
+
+    def test_boolean_flip_pass_boundary(self):
+        """requires_corrob True→False → delta=0.1 → PASS (boundary: delta <= epsilon).
+
+        d_f = 1.0 (boolean); delta = 0.1*1.0 / 1.0 = 0.1
+        0.1 <= epsilon(0.1) → PASS
+        """
+        pkt_b = _valid_packet()
+        pkt_b["requires_corrob"] = False
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["symmetry_status"] == "PASS"
+        assert result["delta"] == 0.1
+        assert result["soft_symmetry_flag"] is False
+        assert result["quarantine_fields"] == []
+
+    def test_all_weights_zero_unknown(self):
+        """All weights zero → no determinate fields → UNKNOWN."""
+        settings = _valid_settings()
+        for k in settings["weights"]:
+            settings["weights"][k] = 0.0
+        result = compute_symmetry(_valid_packet(), _valid_packet(), settings)
+        assert result["symmetry_status"] == "UNKNOWN"
+        assert result["delta"] is None
+        assert result["soft_symmetry_flag"] is False
+        assert result["quarantine_fields"] == []
+        assert any("No determinate" in n for n in result["notes"])
+
+    def test_multiple_divergence_quarantine(self):
+        """classification_bucket + intent_level flip → QUARANTINE.
+
+        delta = (0.25*1.0 + 0.25*1.0) / 1.0 = 0.5
+        0.5 >= tau(0.25) → QUARANTINE
+        """
+        pkt_b = _valid_packet()
+        pkt_b["classification_bucket"] = "normative"
+        pkt_b["intent_level"] = "persuasive"
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["symmetry_status"] == "QUARANTINE"
+        assert result["delta"] == 0.5
+        assert "classification_bucket" in result["quarantine_fields"]
+        assert "intent_level" in result["quarantine_fields"]
+
+    def test_ordinal_distance_confidence_band(self):
+        """confidence_band "sb_mid"→"sb_max" → d_f = 2/3 ≈ 0.666667."""
+        pkt_b = _valid_packet()
+        pkt_b["confidence_band"] = "sb_max"
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["field_deltas"]["confidence_band"] == round(2 / 3, 6)
+
+    def test_ordinal_distance_severity_tier_one_step(self):
+        """severity_tier "moderate"→"elevated" → d_f = 1/4 = 0.25."""
+        pkt_b = _valid_packet()
+        pkt_b["severity_tier"] = "elevated"
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["field_deltas"]["severity_tier"] == 0.25
+
+    def test_artifact_validates(self):
+        """Output of compute_symmetry passes artifact validator."""
+        pkt_b = _valid_packet()
+        pkt_b["classification_bucket"] = "mobilizing"
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        _validate_gsae_symmetry_artifact(result)
+
+    def test_artifact_validates_all_zones(self):
+        """Outputs for all four zones pass artifact validator."""
+        pkt_a = _valid_packet()
+
+        # PASS
+        result = compute_symmetry(pkt_a, _valid_packet(), _valid_settings())
+        assert result["symmetry_status"] == "PASS"
+        _validate_gsae_symmetry_artifact(result)
+
+        # SOFT_FLAG
+        pkt_sf = _valid_packet()
+        pkt_sf["severity_tier"] = "critical"
+        result = compute_symmetry(pkt_a, pkt_sf, _valid_settings())
+        assert result["symmetry_status"] == "SOFT_FLAG"
+        _validate_gsae_symmetry_artifact(result)
+
+        # QUARANTINE
+        pkt_q = _valid_packet()
+        pkt_q["classification_bucket"] = "normative"
+        result = compute_symmetry(pkt_a, pkt_q, _valid_settings())
+        assert result["symmetry_status"] == "QUARANTINE"
+        _validate_gsae_symmetry_artifact(result)
+
+        # UNKNOWN
+        zero_settings = _valid_settings()
+        for k in zero_settings["weights"]:
+            zero_settings["weights"][k] = 0.0
+        result = compute_symmetry(pkt_a, _valid_packet(), zero_settings)
+        assert result["symmetry_status"] == "UNKNOWN"
+        _validate_gsae_symmetry_artifact(result)
+
+    def test_no_mutation(self):
+        """compute_symmetry must not mutate input packets or settings."""
         pkt_a = _valid_packet()
         pkt_b = _valid_packet()
+        pkt_b["classification_bucket"] = "normative"
         settings = _valid_settings()
 
-        with pytest.raises(NotImplementedError):
-            compute_symmetry(pkt_a, pkt_b, settings)
+        pkt_a_copy = copy.deepcopy(pkt_a)
+        pkt_b_copy = copy.deepcopy(pkt_b)
+        settings_copy = copy.deepcopy(settings)
+
+        compute_symmetry(pkt_a, pkt_b, settings)
+
+        assert pkt_a == pkt_a_copy
+        assert pkt_b == pkt_b_copy
+        assert settings == settings_copy
+
+    def test_epsilon_tau_echoed(self):
+        """epsilon and tau in artifact must match settings values."""
+        settings = _valid_settings()
+        settings["epsilon"] = 0.05
+        settings["tau"] = 0.3
+        result = compute_symmetry(_valid_packet(), _valid_packet(), settings)
+        assert result["epsilon"] == 0.05
+        assert result["tau"] == 0.3
+
+    def test_field_deltas_covers_all_base_fields(self):
+        """field_deltas must include every field in SYMMETRY_FIELDS_BASE."""
+        from engine.core.schema_constants import SYMMETRY_FIELDS_BASE
+        result = compute_symmetry(_valid_packet(), _valid_packet(), _valid_settings())
+        assert set(result["field_deltas"].keys()) == SYMMETRY_FIELDS_BASE
+
+    def test_quarantine_only_divergent_fields(self):
+        """quarantine_fields only includes fields with d_f > 0."""
+        pkt_b = _valid_packet()
+        pkt_b["classification_bucket"] = "normative"
+        # Only classification_bucket changed, severity_tier etc. unchanged
+        result = compute_symmetry(_valid_packet(), pkt_b, _valid_settings())
+        assert result["symmetry_status"] == "QUARANTINE"
+        assert result["quarantine_fields"] == ["classification_bucket"]
+        # Unchanged fields should NOT be quarantined
+        assert "severity_tier" not in result["quarantine_fields"]
 
     def test_import_types_from_core_schemas(self):
         """GSAESymmetryPacket, GSAESettings, GSAESymmetryArtifact importable from core."""

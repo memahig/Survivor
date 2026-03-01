@@ -31,6 +31,7 @@ from engine.core.validators import validate_run
 from engine.render.report import render_report
 from engine.render.debug_report import render_debug
 from engine.verify.router import run_verification
+from engine.eo.gsae_apply import apply_gsae_quarantine
 from engine.eo.gsae_process import run_gsae_tier_c
 
 from engine.reviewers.base import ReviewerInputs
@@ -149,11 +150,12 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     # GSAE Tier C (post-extraction, pre-adjudication)
     # ---------------------------
     gsae_block = run_gsae_tier_c(phase2_outputs, config)
+    phase2_sanitized = apply_gsae_quarantine(phase2_outputs, gsae_block, config)
 
     # ---------------------------
-    # Adjudication
+    # Adjudication (uses sanitized phase2)
     # ---------------------------
-    adjudicated = adjudicate(phase2_outputs, config)
+    adjudicated = adjudicate(phase2_sanitized, config)
 
     run_state = {
         "article": article,

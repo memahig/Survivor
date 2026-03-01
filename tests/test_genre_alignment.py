@@ -461,20 +461,22 @@ class TestConfigIntegrity:
             config = json.load(f)
         _validate_gsae_settings(config["gsae_settings"])
 
-    def test_config_weights_match_v01_spec(self):
-        """Weights must match Tier C v0.1 locked defaults."""
+    def test_config_weights_match_v03_spec(self):
+        """Weights must match Tier C v0.3 locked defaults."""
         config_path = os.path.join(
             os.path.dirname(__file__), "..", "engine", "core", "config.json"
         )
         with open(config_path) as f:
             config = json.load(f)
         w = config["gsae_settings"]["weights"]
-        assert w["classification_bucket"] == 0.25
-        assert w["intent_level"] == 0.25
-        assert w["severity_tier"] == 0.2
-        assert w["requires_corrob"] == 0.1
-        assert w["omission_load_bearing"] == 0.1
-        assert w["confidence_band"] == 0.1
+        assert w["classification_bucket"] == 0.10
+        assert w["intent_level"] == 0.10
+        assert w["requires_corrob"] == 0.10
+        assert w["omission_load_bearing"] == 0.10
+        assert w["severity_toward_subject"] == 0.25
+        assert w["severity_toward_counterparty"] == 0.25
+        assert w["confidence_band"] == 0.10
+        assert config["gsae_settings"]["version"] == "0.3"
 
 
 # ===================================================================

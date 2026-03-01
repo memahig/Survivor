@@ -17,14 +17,15 @@
     "epsilon": 0.1,
     "tau": 0.25,
     "weights": {
-      "classification_bucket": 0.25,
-      "intent_level": 0.25,
-      "severity_tier": 0.2,
-      "requires_corrob": 0.1,
-      "omission_load_bearing": 0.1,
-      "confidence_band": 0.1
+      "classification_bucket": 0.10,
+      "intent_level": 0.10,
+      "requires_corrob": 0.10,
+      "omission_load_bearing": 0.10,
+      "severity_toward_subject": 0.25,
+      "severity_toward_counterparty": 0.25,
+      "confidence_band": 0.10
     },
-    "version": "0.2"
+    "version": "0.3"
   },
   "outputs": {
     "main_report": "report.md",

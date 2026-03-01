@@ -12,6 +12,20 @@
   "verification_enabled": true,
   "verification_max_claims": 20,
   "verification_kinds_enabled": ["world_fact", "document_content"],
+  "gsae_settings": {
+    "enabled": true,
+    "epsilon": 0.1,
+    "tau": 0.25,
+    "weights": {
+      "classification_bucket": 0.25,
+      "intent_level": 0.25,
+      "severity_tier": 0.2,
+      "requires_corrob": 0.1,
+      "omission_load_bearing": 0.1,
+      "confidence_band": 0.1
+    },
+    "version": "0.2"
+  },
   "outputs": {
     "main_report": "report.md",
     "run_json": "run.json",

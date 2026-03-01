@@ -129,6 +129,42 @@ SYMMETRY_STATUS_VALUES: frozenset[str] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# GSAE — Required key sets (distinct from field sets by design)
+# ---------------------------------------------------------------------------
+
+# Keys required in a GSAESymmetryPacket dict.
+# Equal to SYMMETRY_FIELDS_BASE today; may diverge if packet gains metadata fields.
+GSAE_SYMMETRY_PACKET_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "classification_bucket",
+    "intent_level",
+    "requires_corrob",
+    "omission_load_bearing",
+    "severity_tier",
+    "confidence_band",
+})
+
+# Keys required in a GSAESettings dict.
+GSAE_SETTINGS_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "enabled",
+    "epsilon",
+    "tau",
+    "weights",
+    "version",
+})
+
+# Keys required in a GSAESymmetryArtifact dict.
+GSAE_ARTIFACT_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "symmetry_status",
+    "delta",
+    "epsilon",
+    "tau",
+    "soft_symmetry_flag",
+    "quarantine_fields",
+    "field_deltas",
+    "notes",
+})
+
+# ---------------------------------------------------------------------------
 # Verification authority rules
 # ---------------------------------------------------------------------------
 

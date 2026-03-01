@@ -23,9 +23,11 @@ Authorized by: ChatGPT (Coordinator), Gemini (Structural Critic), Claude (Code A
 from __future__ import annotations
 
 from engine.core.schema_constants import (
+    GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS,
     SEVERITY_TIER_VALUES_ORDERED,
     SYMMETRY_BAND_VALUES_ORDERED,
     SYMMETRY_FIELDS_BASE,
+    SYMMETRY_FIELDS_V03,
 )
 from engine.core.schemas import (
     GSAESettings,
@@ -41,6 +43,8 @@ from engine.core.schemas import (
 # Ordinal fields with their ordered scales (index determines distance).
 _ORDINAL_SCALES: dict[str, tuple[str, ...]] = {
     "severity_tier": SEVERITY_TIER_VALUES_ORDERED,
+    "severity_toward_subject": SEVERITY_TIER_VALUES_ORDERED,
+    "severity_toward_counterparty": SEVERITY_TIER_VALUES_ORDERED,
     "confidence_band": SYMMETRY_BAND_VALUES_ORDERED,
 }
 
@@ -110,11 +114,18 @@ def compute_symmetry(
     tau = settings["tau"]
     weights = settings["weights"]
 
-    # --- Per-field deltas (all fields in SYMMETRY_FIELDS_BASE) ---
+    # --- Detect packet version from keys ---
+    pkt_keys = set(packet_a.keys())
+    if pkt_keys == GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS:
+        active_fields = SYMMETRY_FIELDS_V03
+    else:
+        active_fields = SYMMETRY_FIELDS_BASE
+
+    # --- Per-field deltas (all fields in active set) ---
     field_deltas: dict[str, float | None] = {}
     notes: list[str] = []
 
-    for field in sorted(SYMMETRY_FIELDS_BASE):
+    for field in sorted(active_fields):
         val_a = packet_a.get(field)
         val_b = packet_b.get(field)
 
@@ -137,7 +148,7 @@ def compute_symmetry(
 
     # --- Weighted aggregate delta ---
     determinate = [
-        f for f in sorted(SYMMETRY_FIELDS_BASE)
+        f for f in sorted(active_fields)
         if field_deltas.get(f) is not None and weights.get(f, 0) > 0
     ]
 
@@ -170,7 +181,7 @@ def compute_symmetry(
 
     if status == "QUARANTINE":
         quarantine_fields = sorted(
-            f for f in SYMMETRY_FIELDS_BASE
+            f for f in active_fields
             if field_deltas.get(f) is not None and field_deltas[f] > 0.0
         )
     else:

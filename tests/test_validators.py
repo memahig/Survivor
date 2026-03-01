@@ -200,6 +200,37 @@ def test_gsae_subject_extra_key_rejected():
         validate_reviewer_pack(pack, _CFG)
 
 
+def test_valid_gsae_observation_v03_passes():
+    """v0.3 directional packet passes strict keyset validation."""
+    pack = _make_pack()
+    pack["gsae_observation"] = {
+        "classification_bucket": "reporting",
+        "intent_level": "none",
+        "requires_corrob": False,
+        "omission_load_bearing": False,
+        "severity_toward_subject": "minimal",
+        "severity_toward_counterparty": "minimal",
+        "confidence_band": "sb_low",
+    }
+    validate_reviewer_pack(pack, _CFG)  # must not raise
+
+
+def test_gsae_observation_v03_missing_pair_rejected():
+    """Missing one directional severity field fails closed."""
+    pack = _make_pack()
+    pack["gsae_observation"] = {
+        "classification_bucket": "reporting",
+        "intent_level": "none",
+        "requires_corrob": False,
+        "omission_load_bearing": False,
+        "severity_toward_subject": "high",
+        # missing severity_toward_counterparty
+        "confidence_band": "sb_low",
+    }
+    with pytest.raises(RuntimeError, match="key mismatch"):
+        validate_reviewer_pack(pack, _CFG)
+
+
 def test_article_classifications_covers_uncertain():
     assert "uncertain" in ARTICLE_CLASSIFICATIONS
 

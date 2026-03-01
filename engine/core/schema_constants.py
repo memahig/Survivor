@@ -116,7 +116,7 @@ SYMMETRY_BAND_VALUES_ORDERED: tuple[str, ...] = (
     "sb_max",
 )
 
-# Tier C v0.1 base symmetry field set.
+# Tier C v0.2 base symmetry field set (legacy undirected).
 # Membership set — order is not load-bearing.
 SYMMETRY_FIELDS_BASE: frozenset[str] = frozenset({
     "classification_bucket",
@@ -126,6 +126,21 @@ SYMMETRY_FIELDS_BASE: frozenset[str] = frozenset({
     "severity_tier",
     "confidence_band",
 })
+
+# Tier C v0.3 directional symmetry field set.
+# Replaces severity_tier with directional pair.
+SYMMETRY_FIELDS_V03: frozenset[str] = frozenset({
+    "classification_bucket",
+    "intent_level",
+    "requires_corrob",
+    "omission_load_bearing",
+    "severity_toward_subject",
+    "severity_toward_counterparty",
+    "confidence_band",
+})
+
+# Union of all known symmetry fields across versions.
+SYMMETRY_FIELDS_ALL: frozenset[str] = SYMMETRY_FIELDS_BASE | SYMMETRY_FIELDS_V03
 
 # Symmetry status zones (output-only).
 SYMMETRY_STATUS_VALUES: frozenset[str] = frozenset({
@@ -147,6 +162,18 @@ GSAE_SYMMETRY_PACKET_REQUIRED_KEYS: frozenset[str] = frozenset({
     "requires_corrob",
     "omission_load_bearing",
     "severity_tier",
+    "confidence_band",
+})
+
+# Keys required in a v0.3 directional GSAESymmetryPacket dict.
+# Replaces severity_tier with directional severity pair.
+GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "classification_bucket",
+    "intent_level",
+    "requires_corrob",
+    "omission_load_bearing",
+    "severity_toward_subject",
+    "severity_toward_counterparty",
     "confidence_band",
 })
 

@@ -45,12 +45,15 @@ from engine.core.schema_constants import (
     GSAE_SETTINGS_REQUIRED_KEYS,
     GSAE_SUBJECT_REQUIRED_KEYS,
     GSAE_SYMMETRY_PACKET_REQUIRED_KEYS,
+    GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS,
     INTEGRITY_SCALE,
     REVIEWER_PACK_OPTIONAL_KEYS,
     REVIEWER_PACK_REQUIRED_KEYS,
     SEVERITY_TIER_VALUES_ORDERED,
     SYMMETRY_BAND_VALUES_ORDERED,
+    SYMMETRY_FIELDS_ALL,
     SYMMETRY_FIELDS_BASE,
+    SYMMETRY_FIELDS_V03,
     SYMMETRY_STATUS_VALUES,
     UNCERTAIN_CLASSIFICATIONS,
     VOTE_VALUES,
@@ -397,18 +400,26 @@ def _is_numeric_not_bool(x: Any) -> bool:
 
 
 def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
-    """Validate a GSAESymmetryPacket dict — strict keyset, vocab, types."""
+    """Validate a GSAESymmetryPacket dict — strict keyset, vocab, types.
+
+    Accepts exactly one of two keysets:
+      v0.2 (legacy): GSAE_SYMMETRY_PACKET_REQUIRED_KEYS (uses severity_tier)
+      v0.3 (directional): GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
+            (uses severity_toward_subject + severity_toward_counterparty)
+    """
     pfx = "_validate_gsae_symmetry_packet"
     _require(isinstance(packet, dict), f"{pfx}: packet must be dict")
 
     keys = set(packet.keys())
+    is_v02 = keys == GSAE_SYMMETRY_PACKET_REQUIRED_KEYS
+    is_v03 = keys == GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
     _require(
-        keys == GSAE_SYMMETRY_PACKET_REQUIRED_KEYS,
-        f"{pfx}: key mismatch — "
-        f"missing={sorted(GSAE_SYMMETRY_PACKET_REQUIRED_KEYS - keys)}, "
-        f"extra={sorted(keys - GSAE_SYMMETRY_PACKET_REQUIRED_KEYS)}",
+        is_v02 or is_v03,
+        f"{pfx}: key mismatch — keys do not match v0.2 or v0.3 keyset. "
+        f"got={sorted(keys)}",
     )
 
+    # --- Common fields (both versions) ---
     cb = packet["classification_bucket"]
     _require(
         cb in CLASSIFICATION_BUCKET_VALUES,
@@ -419,12 +430,6 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
     _require(
         isinstance(il, str) and il.strip(),
         f"{pfx}: intent_level must be non-empty str",
-    )
-
-    st = packet["severity_tier"]
-    _require(
-        st in SEVERITY_TIER_VALUES_ORDERED,
-        f"{pfx}: severity_tier invalid: {st!r}",
     )
 
     band = packet["confidence_band"]
@@ -444,6 +449,25 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
         isinstance(olb, bool),
         f"{pfx}: omission_load_bearing must be bool, got {type(olb).__name__}",
     )
+
+    # --- Version-specific severity fields ---
+    if is_v02:
+        st = packet["severity_tier"]
+        _require(
+            st in SEVERITY_TIER_VALUES_ORDERED,
+            f"{pfx}: severity_tier invalid: {st!r}",
+        )
+    else:
+        sts = packet["severity_toward_subject"]
+        _require(
+            sts in SEVERITY_TIER_VALUES_ORDERED,
+            f"{pfx}: severity_toward_subject invalid: {sts!r}",
+        )
+        stc = packet["severity_toward_counterparty"]
+        _require(
+            stc in SEVERITY_TIER_VALUES_ORDERED,
+            f"{pfx}: severity_toward_counterparty invalid: {stc!r}",
+        )
 
 
 def _validate_gsae_subject(subject: Dict[str, Any]) -> None:
@@ -500,15 +524,28 @@ def _validate_gsae_settings(settings: Dict[str, Any]) -> None:
     _require(eps >= 0, f"{pfx}: epsilon must be >= 0, got {eps}")
     _require(tau >= eps, f"{pfx}: tau must be >= epsilon ({eps}), got {tau}")
 
+    # Version must be validated before weights (weights keyset depends on version).
+    ver = settings["version"]
+    _require(
+        isinstance(ver, str) and ver.strip(),
+        f"{pfx}: version must be non-empty str",
+    )
+
     weights = settings["weights"]
     _require(isinstance(weights, dict), f"{pfx}: weights must be dict")
 
+    # Weights keys must match the packet keyset for the declared version.
+    if ver == "0.3":
+        expected_w_keys = GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
+    else:
+        expected_w_keys = GSAE_SYMMETRY_PACKET_REQUIRED_KEYS
+
     w_keys = set(weights.keys())
     _require(
-        w_keys == GSAE_SYMMETRY_PACKET_REQUIRED_KEYS,
-        f"{pfx}: weights key mismatch — "
-        f"missing={sorted(GSAE_SYMMETRY_PACKET_REQUIRED_KEYS - w_keys)}, "
-        f"extra={sorted(w_keys - GSAE_SYMMETRY_PACKET_REQUIRED_KEYS)}",
+        w_keys == expected_w_keys,
+        f"{pfx}: weights key mismatch for version {ver!r} — "
+        f"missing={sorted(expected_w_keys - w_keys)}, "
+        f"extra={sorted(w_keys - expected_w_keys)}",
     )
     for wk, wv in weights.items():
         _require(
@@ -519,12 +556,6 @@ def _validate_gsae_settings(settings: Dict[str, Any]) -> None:
             wv >= 0,
             f"{pfx}: weights[{wk!r}] must be >= 0, got {wv}",
         )
-
-    ver = settings["version"]
-    _require(
-        isinstance(ver, str) and ver.strip(),
-        f"{pfx}: version must be non-empty str",
-    )
 
 
 def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
@@ -586,7 +617,7 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
             f"{pfx}: soft_symmetry_flag must be True when symmetry_status is {status!r}",
         )
 
-    # quarantine_fields: list[str], entries must be members of SYMMETRY_FIELDS_BASE
+    # quarantine_fields: list[str], entries must be known symmetry fields (any version)
     qf = artifact["quarantine_fields"]
     _require(isinstance(qf, list), f"{pfx}: quarantine_fields must be list")
     for i, f_name in enumerate(qf):
@@ -595,7 +626,7 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
             f"{pfx}: quarantine_fields[{i}] must be str",
         )
         _require(
-            f_name in SYMMETRY_FIELDS_BASE,
+            f_name in SYMMETRY_FIELDS_ALL,
             f"{pfx}: quarantine_fields[{i}] invalid field: {f_name!r}",
         )
 
@@ -606,13 +637,13 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
             f"{pfx}: quarantine_fields must be empty when symmetry_status is {status!r}",
         )
 
-    # field_deltas: dict, keys subset of SYMMETRY_FIELDS_BASE, values float/int/None (not bool)
+    # field_deltas: dict, keys must be known symmetry fields (any version)
     fd = artifact["field_deltas"]
     _require(isinstance(fd, dict), f"{pfx}: field_deltas must be dict")
     for fk, fv in fd.items():
         _require(
-            fk in SYMMETRY_FIELDS_BASE,
-            f"{pfx}: field_deltas key {fk!r} not in SYMMETRY_FIELDS_BASE",
+            fk in SYMMETRY_FIELDS_ALL,
+            f"{pfx}: field_deltas key {fk!r} not in SYMMETRY_FIELDS_ALL",
         )
         if fv is not None:
             _require(

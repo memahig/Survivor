@@ -164,6 +164,42 @@ def test_invalid_gsae_observation_rejected():
         validate_reviewer_pack(pack, _CFG)
 
 
+def test_valid_gsae_subject_passes():
+    """A pack with a valid gsae_subject optional key must pass."""
+    pack = _make_pack()
+    pack["gsae_subject"] = {
+        "subject_label": "Israel",
+        "subject_role": "actor_primary",
+        "counterparty_label": "Iran",
+    }
+    validate_reviewer_pack(pack, _CFG)  # must not raise
+
+
+def test_gsae_subject_missing_key_rejected():
+    """A gsae_subject missing a required key must fail closed."""
+    pack = _make_pack()
+    pack["gsae_subject"] = {
+        "subject_label": "Israel",
+        "subject_role": "actor_primary",
+        # missing counterparty_label
+    }
+    with pytest.raises(RuntimeError, match="key mismatch"):
+        validate_reviewer_pack(pack, _CFG)
+
+
+def test_gsae_subject_extra_key_rejected():
+    """A gsae_subject with an unknown key must fail closed."""
+    pack = _make_pack()
+    pack["gsae_subject"] = {
+        "subject_label": "Israel",
+        "subject_role": "actor_primary",
+        "counterparty_label": "Iran",
+        "polarity": "negative",
+    }
+    with pytest.raises(RuntimeError, match="key mismatch"):
+        validate_reviewer_pack(pack, _CFG)
+
+
 def test_article_classifications_covers_uncertain():
     assert "uncertain" in ARTICLE_CLASSIFICATIONS
 

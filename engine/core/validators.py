@@ -43,6 +43,7 @@ from engine.core.schema_constants import (
     CONFIDENCE_VALUES,
     GSAE_ARTIFACT_REQUIRED_KEYS,
     GSAE_SETTINGS_REQUIRED_KEYS,
+    GSAE_SUBJECT_REQUIRED_KEYS,
     GSAE_SYMMETRY_PACKET_REQUIRED_KEYS,
     INTEGRITY_SCALE,
     REVIEWER_PACK_OPTIONAL_KEYS,
@@ -213,9 +214,11 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
     extra = sorted(actual_keys - allowed_keys)
     _require(not extra, f"ReviewerPack has unknown extra key(s): {extra}")
 
-    # Optional Tier C observation block (validated strictly if present).
+    # Optional Tier C blocks (validated strictly if present).
     if "gsae_observation" in pack:
         _validate_gsae_symmetry_packet(pack["gsae_observation"])
+    if "gsae_subject" in pack:
+        _validate_gsae_subject(pack["gsae_subject"])
 
     _validate_whole_article_judgment(pack)
     _validate_claims(pack)
@@ -441,6 +444,27 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
         isinstance(olb, bool),
         f"{pfx}: omission_load_bearing must be bool, got {type(olb).__name__}",
     )
+
+
+def _validate_gsae_subject(subject: Dict[str, Any]) -> None:
+    """Validate a GSAESubject dict — strict keyset, all non-empty str."""
+    pfx = "_validate_gsae_subject"
+    _require(isinstance(subject, dict), f"{pfx}: subject must be dict")
+
+    keys = set(subject.keys())
+    _require(
+        keys == GSAE_SUBJECT_REQUIRED_KEYS,
+        f"{pfx}: key mismatch — "
+        f"missing={sorted(GSAE_SUBJECT_REQUIRED_KEYS - keys)}, "
+        f"extra={sorted(keys - GSAE_SUBJECT_REQUIRED_KEYS)}",
+    )
+
+    for k in sorted(GSAE_SUBJECT_REQUIRED_KEYS):
+        val = subject[k]
+        _require(
+            isinstance(val, str) and val.strip(),
+            f"{pfx}: {k} must be non-empty str, got {type(val).__name__}",
+        )
 
 
 def _validate_gsae_settings(settings: Dict[str, Any]) -> None:

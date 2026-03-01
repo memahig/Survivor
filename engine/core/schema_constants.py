@@ -36,6 +36,7 @@ REVIEWER_PACK_REQUIRED_KEYS: frozenset[str] = frozenset({
 # Fail closed: any key not in REQUIRED | OPTIONAL is rejected.
 REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "gsae_observation",
+    "gsae_subject",
 })
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,14 @@ GSAE_ARTIFACT_REQUIRED_KEYS: frozenset[str] = frozenset({
     "quarantine_fields",
     "field_deltas",
     "notes",
+})
+
+# Keys required in a GSAESubject dict (identity metadata for swap transform).
+# All fields are non-empty str. counterparty_label uses "unspecified" when none.
+GSAE_SUBJECT_REQUIRED_KEYS: frozenset[str] = frozenset({
+    "subject_label",
+    "subject_role",
+    "counterparty_label",
 })
 
 # ---------------------------------------------------------------------------

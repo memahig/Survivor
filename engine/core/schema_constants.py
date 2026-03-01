@@ -32,6 +32,12 @@ REVIEWER_PACK_REQUIRED_KEYS: frozenset[str] = frozenset({
     "cross_claim_votes",
 })
 
+# Optional keys permitted (but not required) in a ReviewerPack dict.
+# Fail closed: any key not in REQUIRED | OPTIONAL is rejected.
+REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
+    "gsae_observation",
+})
+
 # ---------------------------------------------------------------------------
 # Reviewer pack enum values
 # ---------------------------------------------------------------------------

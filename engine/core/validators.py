@@ -45,6 +45,7 @@ from engine.core.schema_constants import (
     GSAE_SETTINGS_REQUIRED_KEYS,
     GSAE_SYMMETRY_PACKET_REQUIRED_KEYS,
     INTEGRITY_SCALE,
+    REVIEWER_PACK_OPTIONAL_KEYS,
     REVIEWER_PACK_REQUIRED_KEYS,
     SEVERITY_TIER_VALUES_ORDERED,
     SYMMETRY_BAND_VALUES_ORDERED,
@@ -202,8 +203,19 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
     _require(isinstance(reviewer, str) and reviewer.strip(), "ReviewerPack.reviewer missing/invalid")
 
     # (A) Key sets from schema_constants — no hardcoding here.
-    for k in REVIEWER_PACK_REQUIRED_KEYS:
-        _require(k in pack, f"ReviewerPack missing required key: {k}")
+    # "reviewer" validated separately above; include in allowed set.
+    actual_keys = set(pack.keys())
+    allowed_keys = REVIEWER_PACK_REQUIRED_KEYS | REVIEWER_PACK_OPTIONAL_KEYS | {"reviewer"}
+
+    missing = sorted(REVIEWER_PACK_REQUIRED_KEYS - actual_keys)
+    _require(not missing, f"ReviewerPack missing required key(s): {missing}")
+
+    extra = sorted(actual_keys - allowed_keys)
+    _require(not extra, f"ReviewerPack has unknown extra key(s): {extra}")
+
+    # Optional Tier C observation block (validated strictly if present).
+    if "gsae_observation" in pack:
+        _validate_gsae_symmetry_packet(pack["gsae_observation"])
 
     _validate_whole_article_judgment(pack)
     _validate_claims(pack)

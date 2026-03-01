@@ -127,6 +127,43 @@ def test_all_required_keys_validated():
             validate_reviewer_pack(pack, _CFG)
 
 
+def test_unknown_extra_key_rejected():
+    """Any key not in REQUIRED | OPTIONAL must be rejected (fail closed)."""
+    pack = _make_pack()
+    pack["metadata"] = {"debug": True}
+    with pytest.raises(RuntimeError, match="unknown extra key"):
+        validate_reviewer_pack(pack, _CFG)
+
+
+def test_valid_gsae_observation_passes():
+    """A pack with a valid gsae_observation optional key must pass."""
+    pack = _make_pack()
+    pack["gsae_observation"] = {
+        "classification_bucket": "reporting",
+        "intent_level": "none",
+        "requires_corrob": False,
+        "omission_load_bearing": False,
+        "severity_tier": "minimal",
+        "confidence_band": "sb_low",
+    }
+    validate_reviewer_pack(pack, _CFG)  # must not raise
+
+
+def test_invalid_gsae_observation_rejected():
+    """A pack with an invalid gsae_observation must fail closed."""
+    pack = _make_pack()
+    pack["gsae_observation"] = {
+        "classification_bucket": "reporting",
+        "intent_level": "none",
+        "requires_corrob": False,
+        "omission_load_bearing": False,
+        "severity_tier": "minimal",
+        # missing confidence_band
+    }
+    with pytest.raises(RuntimeError, match="key mismatch"):
+        validate_reviewer_pack(pack, _CFG)
+
+
 def test_article_classifications_covers_uncertain():
     assert "uncertain" in ARTICLE_CLASSIFICATIONS
 

@@ -245,7 +245,8 @@ ARTICLE (normalized text):
     # Public API
     # ----------------------------
     def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
-        system_prompt = build_system_prompt("judge", "machine")
+        gsae_enabled = inp.config.get("gsae_settings", {}).get("enabled") is True
+        system_prompt = build_system_prompt("judge", "machine", include_gsae=gsae_enabled)
         out = self._call_json(system_prompt, self._phase1_prompt(inp))
         out["reviewer"] = self.name
         out["cross_claim_votes"] = []  # Phase 1 must be empty list
@@ -256,7 +257,8 @@ ARTICLE (normalized text):
         phase1_all = cross_review_payload["phase1_outputs"]
         my_phase1 = phase1_all[self.name]
 
-        system_prompt = build_system_prompt("judge", "machine")
+        gsae_enabled = inp.config.get("gsae_settings", {}).get("enabled") is True
+        system_prompt = build_system_prompt("judge", "machine", include_gsae=gsae_enabled)
         phase2_out = self._call_json(system_prompt, self._phase2_prompt(inp, cross_review_payload))
         if not isinstance(phase2_out, dict):
             raise RuntimeError(f"{self.name} Phase2 returned non-dict: {type(phase2_out)}")

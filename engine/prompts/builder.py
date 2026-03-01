@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: engine/prompts/builder.py
-VERSION: 0.2
+VERSION: 0.3
 PURPOSE:
 Single call site for constructing the system prompt injected into every
 model call. Loads the canonical boot from disk, validates its structure,
@@ -16,10 +16,16 @@ include_schema parameter:
   Use for Phase 1 / Phase 2 reviewer calls where the ReviewerPack schema applies.
 - True: includes Section 5. Use for arena calls (judge/advocate/anti verdicts).
 
+include_gsae parameter:
+- False (default): no GSAE extraction instructions appended.
+- True: appends engine/prompts/gsae_extraction.txt after the boot body,
+  before invocation parameters.
+
 FAIL-CLOSED:
 - Missing boot file   → raises RuntimeError (open() propagates IOError)
 - Empty boot          → raises RuntimeError
 - Malformed boot      → raises RuntimeError
+- Missing gsae file   → raises RuntimeError (when include_gsae=True)
 - Invalid role        → raises ValueError
 - Invalid output_mode → raises ValueError
 """
@@ -31,6 +37,7 @@ import re
 
 
 _BOOT_PATH = os.path.join(os.path.dirname(__file__), "survivor_boot.txt")
+_GSAE_PATH = os.path.join(os.path.dirname(__file__), "gsae_extraction.txt")
 
 _VALID_ROLES = {"judge", "advocate", "anti"}
 _VALID_OUTPUT_MODES = {"machine", "reader", "dual"}
@@ -52,6 +59,7 @@ def build_system_prompt(
     role: str,
     output_mode: str,
     include_schema: bool = False,
+    include_gsae: bool = False,
 ) -> str:
     """
     Build the full system prompt for a single model call.
@@ -66,11 +74,14 @@ def build_system_prompt(
         If False (default), Section 5 DEFINITIVE SCHEMA is stripped from the
         boot. Use False for Phase 1 / Phase 2 reviewer calls.
         If True, Section 5 is included. Use True for arena judgment calls.
+    include_gsae : bool
+        If True, appends GSAE extraction instructions after the boot body,
+        before invocation parameters. Use True when gsae_settings.enabled.
 
     Returns
     -------
     str
-        Complete system prompt: boot contract + invocation parameters.
+        Complete system prompt: boot contract + (optional GSAE) + invocation parameters.
 
     Raises
     ------
@@ -78,8 +89,9 @@ def build_system_prompt(
         If role or output_mode is not a valid value.
     RuntimeError
         If the boot file is missing, empty, or structurally malformed.
+        If include_gsae is True and the GSAE extraction file is missing.
     IOError / FileNotFoundError
-        If the boot file cannot be read from disk.
+        If a required file cannot be read from disk.
     """
     if role not in _VALID_ROLES:
         raise ValueError(f"Invalid role: {role!r}. Must be one of: {sorted(_VALID_ROLES)}")
@@ -98,11 +110,23 @@ def build_system_prompt(
     if not include_schema:
         boot = _SCHEMA_BLOCK_RE.sub("", boot).strip()
 
+    # Optionally append GSAE extraction instructions.
+    gsae_text = ""
+    if include_gsae:
+        with open(_GSAE_PATH, "r", encoding="utf-8") as f:
+            gsae_text = f.read()
+        if not gsae_text.strip():
+            raise RuntimeError("GSAE extraction file is empty")
+
     format_spec = "json" if output_mode == "machine" else "text"
 
-    return (
-        f"{boot}\n\n"
+    parts = [boot]
+    if gsae_text:
+        parts.append(gsae_text.strip())
+    parts.append(
         f"ROLE: {role}\n"
         f"OUTPUT_MODE: {output_mode}\n"
-        f"FORMAT: {format_spec}\n"
+        f"FORMAT: {format_spec}"
     )
+
+    return "\n\n".join(parts) + "\n"

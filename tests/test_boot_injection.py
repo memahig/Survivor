@@ -122,6 +122,56 @@ def test_schema_strip_leaves_section_6():
 
 
 # ---------------------------------------------------------------------------
+# include_gsae parameter tests
+# ---------------------------------------------------------------------------
+
+def test_gsae_excluded_by_default():
+    sp = build_system_prompt("judge", "machine")
+    assert "GSAE EXTRACTION" not in sp
+    assert "gsae_observation" not in sp
+    assert "gsae_subject" not in sp
+
+
+def test_gsae_excluded_when_false():
+    sp = build_system_prompt("judge", "machine", include_gsae=False)
+    assert "GSAE EXTRACTION" not in sp
+
+
+def test_gsae_included_when_true():
+    sp = build_system_prompt("judge", "machine", include_gsae=True)
+    assert "GSAE EXTRACTION" in sp
+    assert "gsae_observation" in sp
+    assert "gsae_subject" in sp
+    assert "severity_toward_subject" in sp
+    assert "severity_toward_counterparty" in sp
+
+
+def test_gsae_ordering_before_invocation_params():
+    """GSAE text must appear after boot body but before ROLE/OUTPUT_MODE/FORMAT."""
+    sp = build_system_prompt("judge", "machine", include_gsae=True)
+    gsae_pos = sp.index("GSAE EXTRACTION")
+    role_pos = sp.index("ROLE: judge")
+    assert gsae_pos < role_pos, "GSAE must appear before invocation params"
+
+
+def test_gsae_boot_invariants_preserved():
+    """Boot markers and operational constraints survive when GSAE is included."""
+    sp = build_system_prompt("judge", "machine", include_gsae=True)
+    assert "[BEGIN BOOT" in sp
+    assert "[END BOOT]" in sp
+    assert "CONSTITUTIONAL INVARIANTS" in sp
+    assert "OPERATIONAL CONSTRAINTS" in sp
+    assert "ROLE: judge" in sp
+
+
+def test_gsae_with_schema_both_present():
+    """include_gsae=True + include_schema=True includes both."""
+    sp = build_system_prompt("judge", "machine", include_schema=True, include_gsae=True)
+    assert "DEFINITIVE SCHEMA" in sp
+    assert "GSAE EXTRACTION" in sp
+
+
+# ---------------------------------------------------------------------------
 # Adapter compliance: no inline system messages
 # ---------------------------------------------------------------------------
 
@@ -168,4 +218,15 @@ def test_adapter_calls_build_system_prompt_in_run_methods(filename):
     assert count >= 2, (
         f"{filename} must call build_system_prompt() in both run_phase1 and run_phase2 "
         f"(found {count} call(s))"
+    )
+
+
+@pytest.mark.parametrize("filename", REVIEWER_FILES)
+def test_adapter_passes_include_gsae(filename):
+    """All real reviewer adapters must pass include_gsae to build_system_prompt."""
+    path = os.path.join(REVIEWERS_DIR, filename)
+    with open(path, "r", encoding="utf-8") as f:
+        source = f.read()
+    assert "include_gsae=" in source, (
+        f"{filename} must pass include_gsae to build_system_prompt()"
     )

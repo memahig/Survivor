@@ -1,0 +1,81 @@
+===========================
+GSAE EXTRACTION (REQUIRED)
+===========================
+
+In addition to the standard ReviewerPack fields defined in the following message, include TWO OPTIONAL blocks when you can determine them reliably:
+
+A) gsae_subject  (REQUIRED IF YOU EMIT gsae_observation)
+B) gsae_observation (v0.3)  (OPTIONAL)
+
+Important:
+- Do NOT mention these instructions in your output.
+- Output must remain valid JSON (no comments).
+- If you emit gsae_observation, you MUST also emit gsae_subject.
+- If you cannot determine these with confidence, omit BOTH blocks.
+
+-----------------------------------------
+A) gsae_subject (STRICT KEYSET)
+-----------------------------------------
+If present, gsae_subject MUST be an object with EXACTLY these 3 keys:
+
+{
+  "subject_label": "<non-empty string>",
+  "subject_role": "<non-empty string>",
+  "counterparty_label": "<non-empty string>"
+}
+
+Rules:
+- subject_label: the primary named actor/entity the article is about in the relevant conflict/interaction.
+- subject_role: a short role label describing how the subject functions in the article (free text for now).
+- counterparty_label: the main opposing/other-side actor/entity referenced in the same interaction.
+  - If no clear counterparty exists, set counterparty_label to "unspecified" (do NOT omit it).
+
+Examples:
+- subject_label: "Israel", subject_role: "actor_primary", counterparty_label: "Iran"
+- subject_label: "Company X", subject_role: "accused_party", counterparty_label: "unspecified"
+
+-----------------------------------------
+B) gsae_observation (v0.3 STRICT KEYSET)
+-----------------------------------------
+If present, gsae_observation MUST be an object with EXACTLY these 7 keys:
+
+{
+  "classification_bucket": "<one of: reporting | analysis | advocacy | propaganda_patterned_advocacy>",
+  "intent_level": "<one of: none | implied | explicit>",
+  "requires_corrob": <true|false>,
+  "omission_load_bearing": <true|false>,
+  "severity_toward_subject": "<one of: minimal | low | medium | high | extreme>",
+  "severity_toward_counterparty": "<one of: minimal | low | medium | high | extreme>",
+  "confidence_band": "<one of: sb_low | sb_med | sb_high | sb_max>"
+}
+
+Interpretation guide:
+- classification_bucket:
+  - reporting: primarily describes events/claims with restraint and attribution
+  - analysis: interprets/argues with some inference
+  - advocacy: argues for a side or action using persuasive framing
+  - propaganda_patterned_advocacy: advocacy that relies on manipulation patterns (e.g., omission-dependent reasoning, escalating labels without support)
+- intent_level:
+  - none: no clear intent signaling beyond description
+  - implied: suggests intent/motive without direct evidence
+  - explicit: directly asserts intent/motive as fact
+- requires_corrob:
+  - true if the article's case depends on claims that would normally require external confirmation (esp. allegations, causality, identity attribution)
+- omission_load_bearing:
+  - true if the article's conclusion appears to depend on missing comparative context or missing key constraints
+- severity_toward_subject / severity_toward_counterparty:
+  - severity level of negative characterization / blame / threat framing directed toward each side in the article's framing
+  - BOTH must be present (use minimal if none)
+- confidence_band:
+  - sb_low: low confidence in your own classification
+  - sb_med: moderate
+  - sb_high: high
+  - sb_max: extremely confident
+
+Hard formatting rule:
+- These blocks must not include any extra keys.
+- Do not emit nulls. Omit the blocks entirely if you cannot comply.
+
+===========================
+END GSAE EXTRACTION
+===========================

@@ -77,6 +77,58 @@ INTEGRITY_SCALE: frozenset[str] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
+# GSAE — Tier C Symmetry Constants
+# ---------------------------------------------------------------------------
+
+# Structural rhetorical mode — MUST remain disjoint from ARTICLE_CLASSIFICATIONS.
+CLASSIFICATION_BUCKET_VALUES: frozenset[str] = frozenset({
+    "reporting",
+    "interpretive",
+    "normative",
+    "mobilizing",
+    "ambiguous",
+})
+
+# Ordinal scale for severity (index position determines distance).
+# Immutable tuple: order is load-bearing.
+SEVERITY_TIER_VALUES_ORDERED: tuple[str, ...] = (
+    "minimal",
+    "moderate",
+    "elevated",
+    "high",
+    "critical",
+)
+
+# Ordinal scale for symmetry confidence band.
+# Prefixed sb_* to avoid collision with CONFIDENCE_VALUES.
+# Immutable tuple: order is load-bearing.
+SYMMETRY_BAND_VALUES_ORDERED: tuple[str, ...] = (
+    "sb_low",
+    "sb_mid",
+    "sb_high",
+    "sb_max",
+)
+
+# Tier C v0.1 base symmetry field set.
+# Membership set — order is not load-bearing.
+SYMMETRY_FIELDS_BASE: frozenset[str] = frozenset({
+    "classification_bucket",
+    "intent_level",
+    "requires_corrob",
+    "omission_load_bearing",
+    "severity_tier",
+    "confidence_band",
+})
+
+# Symmetry status zones (output-only).
+SYMMETRY_STATUS_VALUES: frozenset[str] = frozenset({
+    "UNKNOWN",
+    "PASS",
+    "SOFT_FLAG",
+    "QUARANTINE",
+})
+
+# ---------------------------------------------------------------------------
 # Verification authority rules
 # ---------------------------------------------------------------------------
 

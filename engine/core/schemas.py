@@ -129,6 +129,74 @@ class Ticket(TypedDict, total=False):
 
 
 # ----------------------------
+# GSAE — Tier C Symmetry Types
+# ----------------------------
+
+class GSAESymmetryPacket(TypedDict):
+    """Minimal field-scoped packet for Tier C symmetry evaluation.
+
+    Derived upstream from validated ReviewerPack data.
+    Contains only fields relevant to symmetry analysis.
+    No raw text. No evidence blobs. No full ReviewerPack.
+
+    Vocabularies defined in schema_constants.py:
+      classification_bucket: CLASSIFICATION_BUCKET_VALUES
+      severity_tier:         SEVERITY_TIER_VALUES_ORDERED
+      confidence_band:       SYMMETRY_BAND_VALUES_ORDERED
+      intent_level:          TBD (next session)
+    """
+
+    classification_bucket: str
+    intent_level: str
+    requires_corrob: bool
+    omission_load_bearing: bool
+    severity_tier: str
+    confidence_band: str
+
+
+class GSAESettings(TypedDict):
+    """Calibration settings for the symmetry engine.
+
+    All values sourced from config.json gsae_settings block.
+    No hard-coded defaults exist in runtime code.
+    """
+
+    enabled: bool
+    epsilon: float
+    tau: float
+    weights: Dict[str, float]
+    version: str
+
+
+class GSAESymmetryArtifact(TypedDict):
+    """Result of Tier C symmetry evaluation between two packets.
+
+    symmetry_status zones:
+      UNKNOWN    — insufficient determinate fields for evaluation
+      PASS       — delta <= epsilon, no quarantine
+      SOFT_FLAG  — epsilon < delta < tau, audit-only flag set
+      QUARANTINE — delta >= tau, divergent fields set to UNKNOWN
+
+    soft_symmetry_flag is audit-only and MUST have zero mechanical
+    effect on adjudication weights, verdicts, or downstream consensus.
+
+    quarantine_fields lists field names where d_f > 0 under QUARANTINE.
+    Omitted or empty when status is not QUARANTINE.
+
+    delta is None when symmetry_status is UNKNOWN.
+    """
+
+    symmetry_status: Literal["UNKNOWN", "PASS", "SOFT_FLAG", "QUARANTINE"]
+    delta: Optional[float]
+    epsilon: float
+    tau: float
+    soft_symmetry_flag: bool
+    quarantine_fields: List[str]
+    field_deltas: Dict[str, Optional[float]]
+    notes: List[str]
+
+
+# ----------------------------
 # ReviewerPack (Phase 1/2)
 # ----------------------------
 

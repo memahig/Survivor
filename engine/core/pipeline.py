@@ -31,7 +31,7 @@ from engine.core.validators import validate_run
 from engine.render.report import render_report
 from engine.render.debug_report import render_debug
 from engine.verify.router import run_verification
-from engine.eo.gsae_packets import extract_gsae_observations
+from engine.eo.gsae_process import run_gsae_tier_c
 
 from engine.reviewers.base import ReviewerInputs
 from engine.reviewers.mock_reviewer import MockReviewer
@@ -146,14 +146,9 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
         json.dump(phase2_outputs, f, indent=2)
 
     # ---------------------------
-    # GSAE observation extraction (dormant — no run_state write yet)
+    # GSAE Tier C (post-extraction, pre-adjudication)
     # ---------------------------
-    gsae_settings = config.get("gsae_settings", {})
-    if isinstance(gsae_settings, dict) and gsae_settings.get("enabled") is True:
-        _gsae_obs = extract_gsae_observations(phase2_outputs)
-        print(f"GSAE: extracted {len(_gsae_obs)} observation(s)")
-        # DO NOT persist _gsae_obs in run_state yet (Option B).
-        # DO NOT call compute_symmetry yet.
+    gsae_block = run_gsae_tier_c(phase2_outputs, config)
 
     # ---------------------------
     # Adjudication
@@ -167,6 +162,9 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
         "phase2": phase2_outputs,
         "adjudicated": adjudicated,
     }
+
+    if gsae_block is not None:
+        run_state["gsae"] = gsae_block
 
     run_state["verification"] = run_verification(run_state, config)
     validate_run(run_state, config)

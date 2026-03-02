@@ -178,6 +178,250 @@ def _group_sort_key(
     )
 
 
+def _compute_conflict_counts(groups: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Count claim groups by disagreement bucket."""
+    counts = {"total_consensus": 0, "minor": 0, "moderate": 0, "high": 0}
+    for g in groups:
+        score = _disagreement_score(_sd(g.get("tally")))
+        desc = _disagreement_descriptor(score)
+        if desc == "total consensus":
+            counts["total_consensus"] += 1
+        elif desc == "minor interpretive variance":
+            counts["minor"] += 1
+        elif desc == "moderate disagreement":
+            counts["moderate"] += 1
+        else:
+            counts["high"] += 1
+    return counts
+
+
+# ---------------------------------------------------------------------------
+# Plain Language Synthesis (deterministic, no LLM)
+# ---------------------------------------------------------------------------
+
+_CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def _reviewer_conclusion_sentence(
+    name: str,
+    classification: str,
+    confidence: str,
+) -> str:
+    """One-sentence summary of what a reviewer concluded."""
+    cl = classification or "unknown"
+    if confidence == "high":
+        return f"**{name.title()}** sees this as **{cl}**."
+    if confidence == "medium":
+        return f"**{name.title()}** sees this as **{cl}**, with moderate confidence."
+    if confidence == "low":
+        return f"**{name.title()}** leans toward **{cl}**, with low confidence."
+    return f"**{name.title()}** sees this as **{cl}**."
+
+
+def _top_counterfactuals(
+    cfs: List[Dict[str, Any]],
+    claim_index: Dict[str, Dict[str, Any]],
+    n: int = 1,
+) -> List[str]:
+    """Pick top-N counterfactuals by confidence, return prose fragments."""
+    if not cfs:
+        return []
+    ranked = sorted(cfs, key=lambda c: _CONFIDENCE_ORDER.get(
+        str(_sd(c).get("confidence", "")).lower(), 9
+    ))
+    out: List[str] = []
+    for cf in ranked[:n]:
+        cf = _sd(cf)
+        why = _s(cf.get("why_it_changes_confidence") or cf.get("description") or "")
+        if not why:
+            continue
+        # Lowercase first char for mid-sentence use
+        why_lower = why[0].lower() + why[1:] if why else why
+        why_lower = _truncate(why_lower, 140)
+        out.append(why_lower)
+    return out
+
+
+def _render_plain_language_synthesis(
+    phase2: Dict[str, Any],
+    adjudicated: Dict[str, Any],
+    groups: List[Dict[str, Any]],
+    conflict_counts: Dict[str, int],
+    gsae: Any,
+    claim_index: Dict[str, Dict[str, Any]],
+    config: Dict[str, Any],
+) -> str:
+    """
+    Deterministic plain-language synthesis from structured adjudicated output.
+    Four blocks: per-reviewer, agreement, caution, synthesis.
+    """
+    lines: List[str] = []
+    lines.append("## What the reviewers found\n\n")
+
+    reviewers = sorted(phase2.keys())
+    n_reviewers = len(reviewers)
+
+    # ---- Block 1: What each reviewer concluded ----
+    for name in reviewers:
+        pack = _sd(phase2.get(name))
+        r_waj = _sd(pack.get("whole_article_judgment"))
+        cls = _s(r_waj.get("classification"))
+        conf = _s(r_waj.get("confidence")).lower()
+
+        sentence = _reviewer_conclusion_sentence(name, cls, conf)
+
+        cfs = _sl(pack.get("counterfactual_requirements"))
+        if cfs:
+            top = _top_counterfactuals(cfs, claim_index, n=1)
+            if top:
+                sentence += f" It raises {len(cfs)} verification concern(s) \u2014 notably that {top[0]}."
+            else:
+                sentence += f" It raises {len(cfs)} verification concern(s)."
+        else:
+            sentence += " It does not raise additional verification concerns."
+
+        lines.append(f"- {sentence}\n")
+
+    lines.append("\n")
+
+    # ---- Block 2: Where they agree ----
+    classifications = {}
+    for name in reviewers:
+        pack = _sd(phase2.get(name))
+        cls = _s(_sd(pack.get("whole_article_judgment")).get("classification")).lower()
+        classifications.setdefault(cls, []).append(name.title())
+
+    if len(classifications) == 1:
+        cls_val = list(classifications.keys())[0]
+        lines.append(
+            f"All {n_reviewers} reviewers classify this as **{cls_val}**."
+        )
+    else:
+        parts = []
+        for cls_val, names in sorted(classifications.items(), key=lambda x: -len(x[1])):
+            parts.append(f"{' and '.join(names)}: {cls_val}")
+        lines.append("Reviewers split \u2014 " + "; ".join(parts) + ".")
+
+    total = len(groups)
+    tc = conflict_counts["total_consensus"]
+    if total > 0:
+        if tc == total:
+            lines.append(f" All {total} claim group(s) reached total consensus.")
+        else:
+            remainder = total - tc
+            # Find the dominant non-consensus descriptor
+            if conflict_counts["high"] > 0:
+                rem_desc = "high structural conflict"
+            elif conflict_counts["moderate"] > 0:
+                rem_desc = "moderate disagreement"
+            else:
+                rem_desc = "minor interpretive variance"
+            lines.append(
+                f" {tc} of {total} claim group(s) reached total consensus; "
+                f"{remainder} show {rem_desc}."
+            )
+    lines.append("\n\n")
+
+    # ---- Block 3: Where caution is raised ----
+    all_cfs: List[Dict[str, Any]] = []
+    for name in reviewers:
+        pack = _sd(phase2.get(name))
+        for cf in _sl(pack.get("counterfactual_requirements")):
+            cf = _sd(cf)
+            cf_copy = dict(cf)
+            cf_copy["_reviewer"] = name
+            all_cfs.append(cf_copy)
+
+    if not all_cfs:
+        lines.append("No reviewers flagged specific verification gaps.\n\n")
+    else:
+        # Sort by confidence (high first), cap at 3
+        ranked = sorted(all_cfs, key=lambda c: _CONFIDENCE_ORDER.get(
+            str(c.get("confidence", "")).lower(), 9
+        ))
+        items = ranked[:3]
+
+        # Count distinct reviewers with CFs
+        cf_reviewers = sorted(set(c["_reviewer"] for c in all_cfs))
+        lines.append(
+            f"{len(cf_reviewers)} reviewer(s) ({', '.join(r.title() for r in cf_reviewers)}) "
+            f"raise verification concerns:\n\n"
+        )
+        for cf in items:
+            reviewer = cf["_reviewer"].title()
+            why = _s(cf.get("why_it_changes_confidence") or cf.get("description") or "")
+            target_id = _s(cf.get("target_claim_id"))
+            claim_rec = claim_index.get(target_id, {})
+            claim_text = _truncate(_s(claim_rec.get("text", "")), 80)
+
+            if why and claim_text:
+                lines.append(f"- {reviewer} notes: {_truncate(why, 140)} (re: \"{claim_text}\")\n")
+            elif why:
+                lines.append(f"- {reviewer} notes: {_truncate(why, 140)}\n")
+
+        lines.append("\n")
+
+    # ---- Block 4: How Survivor combined it ----
+    total_claims = sum(
+        len(_sl(_sd(phase2.get(name)).get("claims")))
+        for name in reviewers
+    )
+
+    consensus_line = ""
+    if total > 0:
+        if tc == total:
+            consensus_line = f"total consensus on all {total}"
+        else:
+            consensus_line = f"total consensus on {tc} of {total}"
+
+    # Symmetry line
+    symmetry_line = ""
+    if isinstance(gsae, dict):
+        artifacts = _sl(gsae.get("artifacts"))
+        q_count = sum(
+            1 for a in artifacts
+            if _sd(a).get("symmetry_status") == "QUARANTINE"
+        )
+        f_count = sum(
+            1 for a in artifacts
+            if _sd(a).get("symmetry_status") == "SOFT_FLAG"
+        )
+        if q_count > 0:
+            symmetry_line = f"symmetry flagged {q_count} reviewer(s) for quarantine"
+        elif f_count > 0:
+            symmetry_line = f"symmetry soft-flagged {f_count} reviewer(s)"
+        else:
+            symmetry_line = "no symmetry violations detected"
+    else:
+        symmetry_line = "symmetry not assessed"
+
+    # Conclusion line
+    waj = _sd(_sd(adjudicated.get("article_track")).get("adjudicated_whole_article_judgment"))
+    adj_cls = _s(waj.get("classification")) or "unknown"
+
+    if tc == total and "quarantine" not in symmetry_line.lower():
+        conclusion = f"stable **{adj_cls}** with no structural distortion detected"
+    elif conflict_counts["high"] > 0:
+        conclusion = f"**{adj_cls}** with high structural conflict across reviewers"
+    elif conflict_counts["moderate"] > 0:
+        conclusion = f"**{adj_cls}** with moderate disagreement across reviewers"
+    elif "quarantine" in symmetry_line.lower():
+        conclusion = f"potential asymmetry detected in **{adj_cls}** \u2014 review symmetry analysis"
+    else:
+        conclusion = f"**{adj_cls}** with minor interpretive variance"
+
+    lines.append(
+        f"Survivor grouped {total_claims} individual claims into "
+        f"{total} claim group(s), checked cross-reviewer agreement, "
+        f"and found {consensus_line}. "
+        f"{symmetry_line.capitalize()}. "
+        f"Conclusion: {conclusion}.\n"
+    )
+
+    lines.append("\n---\n")
+    return "".join(lines)
+
+
 # -----------------------------
 # Public JSON output (optional)
 # -----------------------------
@@ -241,6 +485,50 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
             "notes": _sl(radar.get("notes")),
         }
 
+    # Plain language synthesis (structured)
+    pls_reviewers = []
+    for name in sorted(phase2.keys()):
+        pack = _sd(phase2.get(name))
+        r_waj = _sd(pack.get("whole_article_judgment"))
+        cfs = _sl(pack.get("counterfactual_requirements"))
+        pls_reviewers.append({
+            "reviewer": name,
+            "classification": r_waj.get("classification"),
+            "confidence": r_waj.get("confidence"),
+            "counterfactual_count": len(cfs),
+        })
+
+    conflict_counts = _compute_conflict_counts(groups)
+    plain_language = {
+        "per_reviewer": pls_reviewers,
+        "agreement": {
+            "classification_unanimous": len(set(
+                _s(_sd(phase2.get(n)).get("whole_article_judgment", {}).get("classification"))
+                for n in phase2
+            )) <= 1,
+            "total_consensus_groups": conflict_counts["total_consensus"],
+            "total_groups": len(groups),
+        },
+        "caution": {
+            "reviewers_with_concerns": [
+                name for name in sorted(phase2.keys())
+                if _sl(_sd(phase2.get(name)).get("counterfactual_requirements"))
+            ],
+            "total_concerns": sum(
+                len(_sl(_sd(phase2.get(n)).get("counterfactual_requirements")))
+                for n in phase2
+            ),
+        },
+        "synthesis": {
+            "total_claims": sum(
+                len(_sl(_sd(phase2.get(n)).get("claims")))
+                for n in phase2
+            ),
+            "total_groups": len(groups),
+            "conflict_counts": conflict_counts,
+        },
+    }
+
     return {
         "article": {
             "id": article.get("id"),
@@ -252,6 +540,7 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
             "confidence": waj.get("confidence"),
             "evidence_eids": waj.get("evidence_eids", []),
         },
+        "plain_language_synthesis": plain_language,
         "commented_lines": commented,
         "symmetry": symmetry,
         "divergence_radar": divergence,
@@ -327,9 +616,10 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
 
     lines.append("\n---\n")
 
-    # ---- Claims / groups ----
+    # ---- Claims / groups (compute early for synthesis + bottom line) ----
     arena = _sd(_sd(adjudicated.get("claim_track")).get("arena"))
     groups = [_sd(g) for g in _sl(arena.get("adjudicated_claims"))]
+    conflict_counts = _compute_conflict_counts(groups)
 
     # Derive support counts from group-level vote tallies, not adjudication labels.
     # adjudication is kept/rejected/downgraded; votes are supported/unsupported.
@@ -346,6 +636,12 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
             unsupported.append(g)
         else:
             undetermined.append(g)
+
+    # ---- Plain language synthesis ----
+    gsae = run_state.get("gsae")
+    lines.append(_render_plain_language_synthesis(
+        phase2, adjudicated, groups, conflict_counts, gsae, claim_index, config,
+    ))
 
     lines.append("## Extractive summary of what the article says\n")
     if not groups:
@@ -413,7 +709,6 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
 
     # ---- Symmetry ----
     lines.append("## Symmetry analysis\n")
-    gsae = run_state.get("gsae")
     if not isinstance(gsae, dict):
         lines.append("Status: **Not assessed** (module not executed in this run).\n")
     else:
@@ -564,25 +859,14 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
             f"({len(supported)} supported, {len(unsupported)} not supported, "
             f"{len(undetermined)} undetermined).\n"
         )
-        conflict_counts = {"total_consensus": 0, "minor": 0, "moderate": 0, "high": 0}
-        for g in groups:
-            score = _disagreement_score(_sd(g.get("tally")))
-            desc = _disagreement_descriptor(score)
-            if desc == "total consensus":
-                conflict_counts["total_consensus"] += 1
-            elif desc == "minor interpretive variance":
-                conflict_counts["minor"] += 1
-            elif desc == "moderate disagreement":
-                conflict_counts["moderate"] += 1
-            else:
-                conflict_counts["high"] += 1
+        cc = _compute_conflict_counts(groups)
 
         lines.append(
             "Clarity profile (from cross-reviewer agreement): "
-            f"{conflict_counts['total_consensus']} total-consensus group(s), "
-            f"{conflict_counts['minor']} minor-variance, "
-            f"{conflict_counts['moderate']} moderate-disagreement, "
-            f"{conflict_counts['high']} high-conflict.\n"
+            f"{cc['total_consensus']} total-consensus group(s), "
+            f"{cc['minor']} minor-variance, "
+            f"{cc['moderate']} moderate-disagreement, "
+            f"{cc['high']} high-conflict.\n"
         )
 
     lines.append("\n*Generated by Survivor (multi-reviewer, evidence-indexed).*\n")

@@ -23,6 +23,7 @@ Vote = Literal["supported", "unsupported", "undetermined"]
 Confidence = Literal["low", "medium", "high"]
 
 ArticleClassification = Literal[
+    "reporting",
     "analysis",
     "advocacy",
     "propaganda-patterned advocacy",

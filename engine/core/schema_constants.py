@@ -44,6 +44,7 @@ REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 
 ARTICLE_CLASSIFICATIONS: frozenset[str] = frozenset({
+    "reporting",
     "analysis",
     "advocacy",
     "propaganda-patterned advocacy",

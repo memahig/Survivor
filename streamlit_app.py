@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
 FILE: streamlit_app.py
-VERSION: 0.1
+VERSION: 0.2
 PURPOSE:
-Streamlit UI for Survivor — epistemic integrity pipeline.
-Runs the full pipeline on a URL or pasted article text and renders the report.
+Streamlit UI for Survivor — The Blunt Report.
+Single page. No tabs. Blunt narrative first, technical details in expander.
 
 ARCHITECTURE:
 - Calls engine.core.pipeline.run_pipeline() with a temp directory.
-- Reads back report.md and displays it.
+- Renders Blunt narrative via engine.render.blunt_biaslens.
+- Falls back to technical report.md if Blunt renderer fails.
 - Password-gated via dual-source: st.secrets (Cloud) or .env (local).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -28,7 +30,7 @@ BUILD_ID = "SURVIVOR_2026-03-01"
 # -----------------------------
 # UI config
 # -----------------------------
-st.set_page_config(page_title="Survivor", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="The Blunt Report", page_icon="🛡️", layout="wide")
 
 
 # -----------------------------
@@ -49,7 +51,7 @@ def _require_password() -> None:
     if st.session_state.get("authenticated"):
         return
 
-    st.title("🛡️ Survivor")
+    st.title("The Blunt Report")
     st.markdown("**Access restricted.** Enter the password to continue.")
     st.caption("auth: waiting")
     pwd = st.text_input("Password", type="password", key="_auth_pwd")
@@ -71,30 +73,43 @@ def _require_password() -> None:
 
 _require_password()
 
-st.title("🛡️ Survivor — Epistemic Integrity Pipeline")
+st.title("The Blunt Report")
 st.caption(f"Build: {BUILD_ID} | auth: ok")
-st.caption("Multi-reviewer, evidence-indexed article analysis with GSAE symmetry enforcement.")
+st.write("A multi-reviewer pipeline that reports what can be responsibly recovered from an article.")
 
+# Logout in sidebar (minimal)
 with st.sidebar:
-    st.header("Options")
-    show_debug = st.checkbox("Show debug report", value=False)
-    show_json = st.checkbox("Show raw run.json", value=False)
-
-    st.divider()
     if st.session_state.get("authenticated"):
         if st.button("Logout", use_container_width=True):
             st.session_state.pop("authenticated", None)
             st.session_state.pop("_auth_pwd", None)
             st.rerun()
 
-tab_url, tab_text = st.tabs(["Analyze URL", "Paste Text"])
+
+# -----------------------------
+# Input — single radio, one input, one button
+# -----------------------------
+mode = st.radio("Input", ["URL", "Paste text"], horizontal=True)
+
+url = ""
+raw_text = ""
+if mode == "URL":
+    url = st.text_input("Article URL", value="", placeholder="https://...")
+else:
+    raw_text = st.text_area(
+        "Paste article body text",
+        height=260,
+        placeholder="Paste the full article text here (not the URL).",
+    )
+
+go = st.button("Run", use_container_width=True)
 
 
 # -----------------------------
 # Pipeline runner
 # -----------------------------
 def _run_survivor(*, url: str | None = None, text_content: str | None = None) -> None:
-    """Run the Survivor pipeline and display the report."""
+    """Run the Survivor pipeline and display the Blunt Report."""
     with st.spinner("Running Survivor pipeline (this may take 1-2 minutes)..."):
         try:
             from engine.core.pipeline import run_pipeline
@@ -120,70 +135,77 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                 st.error(f"Pipeline error: {e}")
                 return
 
-            # Read back generated reports
+            # Read back generated files
             report_path = os.path.join(tmpdir, "report.md")
             debug_path = os.path.join(tmpdir, "debug.md")
             run_json_path = os.path.join(tmpdir, "run.json")
 
+            report_md = None
             if os.path.exists(report_path):
                 with open(report_path, "r", encoding="utf-8") as f:
                     report_md = f.read()
-            else:
-                st.error("Pipeline completed but report.md was not generated.")
-                return
 
             debug_md = None
-            if show_debug and os.path.exists(debug_path):
+            if os.path.exists(debug_path):
                 with open(debug_path, "r", encoding="utf-8") as f:
                     debug_md = f.read()
 
-            run_json = None
-            if show_json and os.path.exists(run_json_path):
+            run_json_str = None
+            run_state = None
+            if os.path.exists(run_json_path):
                 with open(run_json_path, "r", encoding="utf-8") as f:
-                    run_json = f.read()
+                    run_json_str = f.read()
+                try:
+                    run_state = json.loads(run_json_str)
+                except json.JSONDecodeError:
+                    run_state = None
 
-    # Render outside the spinner
-    st.success("Pipeline complete.")
-    st.markdown(report_md)
+    # ---- Render Blunt Report first ----
+    blunt_md = None
+    if run_state is not None:
+        try:
+            from engine.render.blunt_biaslens import render_blunt_biaslens
+            blunt_md = render_blunt_biaslens(run_state, config={})
+        except Exception:
+            blunt_md = None
 
-    if debug_md:
-        with st.expander("Debug Report", expanded=False):
+    st.success("Done.")
+
+    if blunt_md:
+        st.markdown(blunt_md)
+    else:
+        st.info("Blunt report renderer not available. Showing technical report below.")
+        if report_md:
+            st.markdown(report_md)
+        else:
+            st.error("No report was generated.")
+            return
+
+    # ---- Technical details in expander ----
+    with st.expander("Technical details", expanded=False):
+        if report_md:
+            st.markdown(report_md)
+        if debug_md:
+            st.markdown("\n---\n")
             st.markdown(debug_md)
-
-    if run_json:
-        with st.expander("Raw run.json", expanded=False):
-            st.code(run_json, language="json")
+        if run_json_str:
+            st.markdown("\n---\n")
+            st.code(run_json_str, language="json")
 
 
 # -----------------------------
-# Tab: URL
+# Run
 # -----------------------------
-with tab_url:
-    url = st.text_input("Article URL", value="", placeholder="https://...")
-    go_url = st.button("Analyze URL", use_container_width=True, key="go_url")
-
-    if go_url:
+if go:
+    if mode == "URL":
         u = (url or "").strip()
         if not u:
             st.warning("Please enter a URL.")
         else:
             _run_survivor(url=u)
-
-
-# -----------------------------
-# Tab: Paste Text
-# -----------------------------
-with tab_text:
-    raw_text = st.text_area(
-        "Paste article body text",
-        height=300,
-        placeholder="Paste the full article text here (not the URL).",
-    )
-    go_text = st.button("Analyze pasted text", use_container_width=True, key="go_text")
-
-    if go_text:
-        article_text = (raw_text or "").strip()
-        if not article_text:
+    else:
+        t = (raw_text or "").strip()
+        if not t:
             st.warning("Please paste some article text.")
         else:
-            _run_survivor(text_content=article_text)
+            _run_survivor(text_content=t)

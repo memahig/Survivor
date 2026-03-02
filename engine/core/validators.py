@@ -204,7 +204,12 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
 
 
 def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
-    """Normalize common LLM drift in reviewer output before strict validation."""
+    """LEGACY SAFETY NET — primary normalization is now in engine/core/translator.py.
+
+    This function remains as a fail-safe in case the translator misses something.
+    No new aliases should be added here. All new translation rules go in
+    engine/core/translation_rules.py (lossless-only).
+    """
     # --- Classification synonyms ---
     waj = pack.get("whole_article_judgment")
     if isinstance(waj, dict):

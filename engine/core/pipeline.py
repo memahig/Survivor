@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/pipeline.py
-VERSION: 0.3
+VERSION: 0.4
 PURPOSE:
 Primary execution spine for Survivor.
 
@@ -27,6 +27,8 @@ from engine.core.ingest import ingest_input
 from engine.core.normalize import normalize_text
 from engine.core.evidence_bank import build_evidence_bank
 from engine.core.adjudicator import adjudicate
+from engine.core.errors import ReviewerPackCompileError
+from engine.core.translator import compile_reviewer_pack
 from engine.core.validators import validate_run
 from engine.render.report import render_report
 from engine.render.debug_report import render_debug
@@ -52,6 +54,16 @@ def _lazy_import_gemini_reviewer():
 def _lazy_import_claude_reviewer():
     from engine.reviewers.claude_reviewer import ClaudeReviewer  # type: ignore
     return ClaudeReviewer
+
+
+def _write_compile_error_report(error: ReviewerPackCompileError, outdir: str) -> None:
+    """Write compile_error.json debug artifact on translator failure."""
+    path = os.path.join(outdir, "compile_error.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(error.to_debug_dict(), f, indent=2, ensure_ascii=False, default=str)
+    except Exception:
+        pass  # best-effort; don't mask the original error
 
 
 def _build_reviewers_from_config(config: Dict[str, Any]) -> List[Any]:
@@ -117,7 +129,21 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             evidence_bank=evidence_bank,
             config=config,
         )
-        phase1_outputs[reviewer.name] = reviewer.run_phase1(inp)
+        raw_pack = reviewer.run_phase1(inp)
+        try:
+            compiled = compile_reviewer_pack(
+                reviewer_id=reviewer.name,
+                raw_pack=raw_pack,
+                call_reviewer_fn=reviewer._call_json,
+                config=config,
+            )
+        except ReviewerPackCompileError as e:
+            _write_compile_error_report(e, outdir)
+            raise RuntimeError(
+                f"Reviewer '{reviewer.name}' failed Phase 1 compilation "
+                f"after {e.attempt} attempts"
+            ) from e
+        phase1_outputs[reviewer.name] = compiled
 
     # ---------------------------
     # Cross-review payload
@@ -141,7 +167,21 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             evidence_bank=evidence_bank,
             config=config,
         )
-        phase2_outputs[reviewer.name] = reviewer.run_phase2(inp, cross_payload)
+        raw_pack = reviewer.run_phase2(inp, cross_payload)
+        try:
+            compiled = compile_reviewer_pack(
+                reviewer_id=reviewer.name,
+                raw_pack=raw_pack,
+                call_reviewer_fn=reviewer._call_json,
+                config=config,
+            )
+        except ReviewerPackCompileError as e:
+            _write_compile_error_report(e, outdir)
+            raise RuntimeError(
+                f"Reviewer '{reviewer.name}' failed Phase 2 compilation "
+                f"after {e.attempt} attempts"
+            ) from e
+        phase2_outputs[reviewer.name] = compiled
 
     # Optional debug artifact (single write, after loop)
     with open(os.path.join(outdir, "phase2_outputs.json"), "w") as f:

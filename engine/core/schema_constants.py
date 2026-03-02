@@ -37,6 +37,7 @@ REVIEWER_PACK_REQUIRED_KEYS: frozenset[str] = frozenset({
 REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "gsae_observation",
     "gsae_subject",
+    "expression",  # Permissive free-text/alternate-label block (v1.0 translator)
 })
 
 # ---------------------------------------------------------------------------

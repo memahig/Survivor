@@ -1012,6 +1012,10 @@ def _validate_verification(run_state: Dict[str, Any], config: Dict[str, Any]) ->
         )
 
         confidence = r.get("confidence")
+        # Normalize case: verification CONFIDENCE_VALUES are uppercase
+        if isinstance(confidence, str) and confidence.upper() in VERIFY_CONFIDENCE_VALUES:
+            confidence = confidence.upper()
+            r["confidence"] = confidence
         _require(
             confidence in VERIFY_CONFIDENCE_VALUES,
             f"verification result[{i}].confidence invalid: {confidence!r}",

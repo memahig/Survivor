@@ -32,8 +32,8 @@ def noop_verify(
         "claim_text": claim_text,
         "claim_kind": claim_kind,
         "verification_status": "not_checked_yet",
-        # "low" reflects that no verification occurred — not a judgment of the claim itself
-        "confidence": "low",
+        # "LOW" reflects that no verification occurred — not a judgment of the claim itself
+        "confidence": "LOW",
         "authority_sources": [],
         "method_note": "noop_verifier: no external check performed (v1.3 scaffolding)",
         "checked_at": datetime.now(timezone.utc).isoformat(),

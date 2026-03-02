@@ -23,13 +23,18 @@ from engine.core.pipeline import run_pipeline  # noqa: E402
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default=None)
-    ap.add_argument("--textfile", default=None)
-    ap.add_argument("--outdir", default="out")
+    ap = argparse.ArgumentParser(
+        prog="run_survivor",
+        description="Run Survivor end-to-end on an article and write report.md / run.json / tickets.json / debug.md to an output directory.",
+    )
+    ap.add_argument("--url", default=None, help="Source URL for the article")
+    ap.add_argument("--textfile", default=None, help="Local file path containing article text")
+    ap.add_argument("--outdir", default="out", help="Output directory (default: out)")
     args = ap.parse_args()
 
     run_pipeline(url=args.url, textfile=args.textfile, outdir=args.outdir)
+
+    print(f"[survivor] done. outputs written to: {args.outdir}")
 
 
 if __name__ == "__main__":

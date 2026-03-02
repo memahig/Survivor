@@ -299,6 +299,47 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                 # Unknown bucket — default to ambiguous rather than fail
                 obs["classification_bucket"] = "ambiguous"
 
+        # --- GSAE severity tier normalization ---
+        # Allowed: minimal, moderate, elevated, high, critical
+        _SEVERITY_MAP = {
+            "low": "minimal",
+            "none": "minimal",
+            "minor": "minimal",
+            "medium": "moderate",
+            "mid": "moderate",
+            "severe": "critical",
+            "very_high": "critical",
+            "extreme": "critical",
+        }
+        _SEVERITY_LEGAL = set(SEVERITY_TIER_VALUES_ORDERED)
+        for sfield in ("severity_tier", "severity_toward_subject", "severity_toward_counterparty"):
+            raw_sev = obs.get(sfield)
+            if isinstance(raw_sev, str):
+                skey = raw_sev.strip().lower().replace(" ", "_")
+                if skey in _SEVERITY_MAP:
+                    obs[sfield] = _SEVERITY_MAP[skey]
+                elif skey not in _SEVERITY_LEGAL:
+                    obs[sfield] = "moderate"
+
+        # --- GSAE confidence_band normalization ---
+        # Allowed: sb_low, sb_mid, sb_high, sb_max
+        _BAND_MAP = {
+            "low": "sb_low",
+            "medium": "sb_mid",
+            "mid": "sb_mid",
+            "high": "sb_high",
+            "max": "sb_max",
+            "maximum": "sb_max",
+        }
+        _BAND_LEGAL = set(SYMMETRY_BAND_VALUES_ORDERED)
+        raw_band = obs.get("confidence_band")
+        if isinstance(raw_band, str):
+            band_key = raw_band.strip().lower().replace(" ", "_")
+            if band_key in _BAND_MAP:
+                obs["confidence_band"] = _BAND_MAP[band_key]
+            elif band_key not in _BAND_LEGAL:
+                obs["confidence_band"] = "sb_mid"
+
 
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:
     _require(isinstance(pack, dict), "ReviewerPack must be dict")

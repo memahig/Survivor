@@ -590,12 +590,15 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
     _require(isinstance(packet, dict), f"{pfx}: packet must be dict")
 
     keys = set(packet.keys())
-    is_v02 = keys == GSAE_SYMMETRY_PACKET_REQUIRED_KEYS
-    is_v03 = keys == GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
+    # Strip raw_* audit fields injected by translator._annotate_raw_fields()
+    # before keyset comparison — these are pass-through annotation fields.
+    schema_keys = {k for k in keys if not k.startswith("raw_")}
+    is_v02 = schema_keys == GSAE_SYMMETRY_PACKET_REQUIRED_KEYS
+    is_v03 = schema_keys == GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
     _require(
         is_v02 or is_v03,
         f"{pfx}: key mismatch — keys do not match v0.2 or v0.3 keyset. "
-        f"got={sorted(keys)}",
+        f"got={sorted(schema_keys)}",
     )
 
     # --- Common fields (both versions) ---

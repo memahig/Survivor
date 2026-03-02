@@ -25,6 +25,15 @@ import streamlit as st
 
 load_dotenv()  # load .env for local runs; no-op if absent
 
+# Bridge: Streamlit Cloud secrets → os.environ (engine uses os.getenv)
+_SECRET_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY")
+try:
+    for _k in _SECRET_KEYS:
+        if _k in st.secrets and _k not in os.environ:
+            os.environ[_k] = st.secrets[_k]
+except Exception:
+    pass  # st.secrets unavailable (local run) — .env handles it
+
 BUILD_ID = "SURVIVOR_2026-03-01"
 
 

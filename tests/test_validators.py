@@ -510,7 +510,7 @@ def _make_verification_result(status, authority_sources=None):
     base = {
         "claim_id": "G001",
         "claim_text": "Some claim text.",
-        "claim_kind": "factual",         # CLAIM_KINDS from engine.verify.base
+        "claim_kind": "world_fact",      # CLAIM_KINDS from engine.verify.base
         "verification_status": status,
         "confidence": "LOW",             # CONFIDENCE_VALUES from engine.verify.base (uppercase)
         "authority_sources": authority_sources if authority_sources is not None else [],

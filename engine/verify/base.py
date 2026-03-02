@@ -57,11 +57,8 @@ class VerificationPack(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 
 CLAIM_KINDS: FrozenSet[str] = frozenset({
-    "factual",
-    "numerical",
-    "causal",
-    "attribution",
-    "timeline",
+    "world_fact",
+    "document_content",
 })
 
 

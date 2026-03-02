@@ -157,7 +157,7 @@ def _make_verification_result(status: str, authority_sources=None):
     return {
         "claim_id": "openai-CL-01",
         "claim_text": "A factual claim.",
-        "claim_kind": "factual",      # from CLAIM_KINDS
+        "claim_kind": "world_fact",   # from CLAIM_KINDS
         "verification_status": status,
         "confidence": "LOW",          # from CONFIDENCE_VALUES (uppercase)
         "authority_sources": authority_sources if authority_sources is not None else [],

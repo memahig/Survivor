@@ -55,6 +55,10 @@ ARTICLE_CLASSIFICATIONS: frozenset[str] = frozenset({
 # Classifications that require uncertainty_basis + check_scope in the pack
 UNCERTAIN_CLASSIFICATIONS: frozenset[str] = frozenset({"uncertain"})
 
+# Classifications that allow empty evidence_eids at the whole-article level
+# (reporting articles may not have article-level evidence anchors)
+EMPTY_EIDS_ALLOWED_CLASSIFICATIONS: frozenset[str] = frozenset({"uncertain", "reporting"})
+
 CLAIM_TYPES: frozenset[str] = frozenset({
     "factual",
     "causal",

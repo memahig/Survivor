@@ -55,6 +55,7 @@ from engine.core.schema_constants import (
     SYMMETRY_FIELDS_BASE,
     SYMMETRY_FIELDS_V03,
     SYMMETRY_STATUS_VALUES,
+    EMPTY_EIDS_ALLOWED_CLASSIFICATIONS,
     UNCERTAIN_CLASSIFICATIONS,
     VOTE_VALUES,
 )
@@ -94,7 +95,7 @@ def _validate_whole_article_judgment(pack: Dict[str, Any]) -> None:
     )
     _require(_is_list_of_str(eids), "whole_article_judgment.evidence_eids must be list[str]")
 
-    # (B) Uncertain classification: no bypass — require uncertainty_basis + check_scope.
+    # (B) Uncertain classification: require uncertainty_basis + check_scope.
     if classification in UNCERTAIN_CLASSIFICATIONS:
         uncertainty_basis = waj.get("uncertainty_basis")
         _require(
@@ -108,10 +109,12 @@ def _validate_whole_article_judgment(pack: Dict[str, Any]) -> None:
         )
         return
 
-    _require(
-        len(eids) > 0,
-        "whole_article_judgment.evidence_eids must be non-empty unless classification is uncertain",
-    )
+    # (B2) Some classifications allow empty evidence_eids at whole-article level.
+    if classification not in EMPTY_EIDS_ALLOWED_CLASSIFICATIONS:
+        _require(
+            len(eids) > 0,
+            "whole_article_judgment.evidence_eids must be non-empty unless classification is uncertain or reporting",
+        )
 
     # (C) Integrity Scale — validate if the field is present in waj.
     integrity_rating = waj.get("integrity_rating")

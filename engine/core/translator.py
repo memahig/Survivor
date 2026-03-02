@@ -333,10 +333,15 @@ def _nullify_allowed_fields(
     SENTINEL = "__ALLOWED_CHANGE__"
     out = copy.deepcopy(pack)
 
-    # Top-level allowed keys
+    # Top-level allowed keys — also insert sentinel for absent keys
+    # so that a new key added during repair (e.g. "expression") doesn't
+    # trigger a false positive when the original pack lacked it.
     for key in list(out.keys()):
         if key in allowed_paths:
             out[key] = SENTINEL
+    for path in allowed_paths:
+        if "." not in path and "[" not in path and path not in out:
+            out[path] = SENTINEL
 
     # Nested: whole_article_judgment.*
     waj = out.get("whole_article_judgment")

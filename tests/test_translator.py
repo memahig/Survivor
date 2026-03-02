@@ -427,6 +427,29 @@ def test_expression_block_allowed():
     assert result["expression"]["commentary"].startswith("The article")
 
 
+def test_repair_adding_expression_allowed():
+    """Repair that adds expression block (absent in attempt 1) passes diff guard."""
+    pack = _make_valid_pack()
+    pack["whole_article_judgment"]["classification"] = "nonsense"
+    # No "expression" key in original pack
+
+    def mock_repair(system_prompt, user_prompt):
+        fixed = _make_valid_pack()
+        fixed["whole_article_judgment"]["classification"] = "reporting"
+        fixed["expression"] = {"commentary": "Nuance beyond the enum."}
+        return fixed
+
+    result = compile_reviewer_pack(
+        reviewer_id="gemini",
+        raw_pack=pack,
+        call_reviewer_fn=mock_repair,
+        config=_CFG,
+    )
+
+    assert result["whole_article_judgment"]["classification"] == "reporting"
+    assert "expression" in result
+
+
 # ---------------------------------------------------------------------------
 # build_enum_contract_text
 # ---------------------------------------------------------------------------

@@ -225,7 +225,22 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
             if key in _CLASSIFICATION_MAP:
                 waj["classification"] = _CLASSIFICATION_MAP[key]
 
-    # --- Centrality clamping (must be 1, 2, or 3) ---
+    # --- Claim type synonyms ---
+    _CLAIM_TYPE_MAP = {
+        "stated_position": "normative",
+        "stance": "normative",
+        "opinion": "normative",
+        "observation": "factual",
+        "reporting": "factual",
+        "report": "factual",
+        "fact": "factual",
+        "forecast": "predictive",
+        "prediction": "predictive",
+        "explanation": "causal",
+        "cause": "causal",
+    }
+
+    # --- Centrality clamping (must be 1, 2, or 3) + claim type normalization ---
     claims = pack.get("claims")
     if isinstance(claims, list):
         for c in claims:
@@ -237,6 +252,12 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
             except (TypeError, ValueError):
                 v = 2  # default to mid-range
             c["centrality"] = max(1, min(3, v))
+
+            raw_type = c.get("type")
+            if isinstance(raw_type, str):
+                key = raw_type.strip().lower()
+                if key in _CLAIM_TYPE_MAP:
+                    c["type"] = _CLAIM_TYPE_MAP[key]
 
 
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:

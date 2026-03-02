@@ -230,14 +230,23 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
         "stated_position": "normative",
         "stance": "normative",
         "opinion": "normative",
+        "argument": "normative",
         "observation": "factual",
         "reporting": "factual",
         "report": "factual",
         "fact": "factual",
         "forecast": "predictive",
         "prediction": "predictive",
+        "projection": "predictive",
         "explanation": "causal",
         "cause": "causal",
+        "result": "causal",
+        # compound types LLMs invent
+        "prediction_or_opinion": "predictive",
+        "factual_claim": "factual",
+        "causal_claim": "causal",
+        "normative_claim": "normative",
+        "predictive_claim": "predictive",
     }
 
     # --- Centrality clamping (must be 1, 2, or 3) + claim type normalization ---
@@ -255,9 +264,12 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
 
             raw_type = c.get("type")
             if isinstance(raw_type, str):
-                key = raw_type.strip().lower()
+                key = raw_type.strip().lower().replace(" ", "_")
                 if key in _CLAIM_TYPE_MAP:
                     c["type"] = _CLAIM_TYPE_MAP[key]
+                elif key not in CLAIM_TYPES:
+                    # Unknown type — default to factual rather than fail
+                    c["type"] = "factual"
 
 
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:

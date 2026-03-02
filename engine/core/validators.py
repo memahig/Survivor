@@ -205,27 +205,38 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
 
 def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
     """Normalize common LLM drift in reviewer output before strict validation."""
+    # --- Classification synonyms ---
     waj = pack.get("whole_article_judgment")
-    if not isinstance(waj, dict):
-        return
-    raw = waj.get("classification")
-    if not isinstance(raw, str):
-        return
-    key = raw.strip().lower()
-    # Map common LLM synonyms to canonical enum values.
-    _CLASSIFICATION_MAP = {
-        "news": "reporting",
-        "straight_news": "reporting",
-        "news_reporting": "reporting",
-        "factual_reporting": "reporting",
-        "commentary": "analysis",
-        "opinion": "analysis",
-        "editorial": "analysis",
-        "propaganda": "propaganda-patterned advocacy",
-        "propaganda_patterned": "propaganda-patterned advocacy",
-    }
-    if key in _CLASSIFICATION_MAP:
-        waj["classification"] = _CLASSIFICATION_MAP[key]
+    if isinstance(waj, dict):
+        raw = waj.get("classification")
+        if isinstance(raw, str):
+            key = raw.strip().lower()
+            _CLASSIFICATION_MAP = {
+                "news": "reporting",
+                "straight_news": "reporting",
+                "news_reporting": "reporting",
+                "factual_reporting": "reporting",
+                "commentary": "analysis",
+                "opinion": "analysis",
+                "editorial": "analysis",
+                "propaganda": "propaganda-patterned advocacy",
+                "propaganda_patterned": "propaganda-patterned advocacy",
+            }
+            if key in _CLASSIFICATION_MAP:
+                waj["classification"] = _CLASSIFICATION_MAP[key]
+
+    # --- Centrality clamping (must be 1, 2, or 3) ---
+    claims = pack.get("claims")
+    if isinstance(claims, list):
+        for c in claims:
+            if not isinstance(c, dict):
+                continue
+            raw_c = c.get("centrality")
+            try:
+                v = int(raw_c)
+            except (TypeError, ValueError):
+                v = 2  # default to mid-range
+            c["centrality"] = max(1, min(3, v))
 
 
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/ingest.py
-VERSION: 0.1
+VERSION: 0.2
 PURPOSE:
-Ingest input article text from either a URL (future) or local textfile (v0).
+Ingest input article text from a URL (via trafilatura) or local textfile.
 
 CONTRACT:
 - ingest_input(url, textfile) returns dict:
@@ -14,7 +14,7 @@ CONTRACT:
       "text": str
     }
 - Fail closed if neither or both are provided.
-- v0 supports textfile only. URL ingestion will be added later.
+- URL ingestion uses engine.ingest.scraper (hard-timeout, non-hanging).
 """
 
 from __future__ import annotations
@@ -44,5 +44,20 @@ def ingest_input(url: Optional[str], textfile: Optional[str]) -> Dict[str, Any]:
             "text": text,
         }
 
-    # url path (not implemented yet)
-    raise NotImplementedError("URL ingestion not implemented yet (v0 supports --textfile only).")
+    # url path — scrape via trafilatura
+    from engine.ingest.scraper import scrape_url
+
+    result = scrape_url(url, timeout_s=30)
+    if not result.success:
+        raise RuntimeError(f"URL scrape failed ({result.error_code}): {result.text}")
+
+    text = result.text.strip()
+    if not text:
+        raise RuntimeError("Scraped page but got empty text")
+
+    return {
+        "id": _stable_id(text),
+        "source_url": url,
+        "title": None,
+        "text": text,
+    }

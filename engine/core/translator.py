@@ -21,9 +21,10 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from engine.core.errors import ReviewerPackCompileError
+from engine.core.errors import ReviewerPackCompileError, ReviewerPackValidationError
 from engine.core.translation_rules import (
     CANONICAL_ENUMS,
     build_enum_contract_text,
@@ -228,6 +229,210 @@ def _build_repair_user_prompt(
 
 
 # ---------------------------------------------------------------------------
+# Diff guard: allowlist-based enforcement for repair attempts
+# ---------------------------------------------------------------------------
+#
+# Design: the allowed change set is derived from the exact error paths.
+# For each failing error path p:
+#   - allow p
+#   - allow raw_* sibling fields under that object (audit fields)
+#   - allow "expression" at top level (always permitted)
+# Everything else must be identical between attempt 1 and attempt 2.
+# Comparison is on post-translate packs (both after translation rules applied).
+
+
+# Explicit map from canonical enum field path → raw_* audit field name.
+# Derived from _ANNOTATION_PATHS / _CLAIM_ANNOTATION_PATHS / etc.
+# Do NOT synthesize raw_* names; use this map.
+_RAW_SIBLING_MAP: Dict[str, str] = {
+    "whole_article_judgment.classification": "whole_article_judgment.raw_classification_label",
+    "whole_article_judgment.confidence": "whole_article_judgment.raw_confidence_label",
+    "claims.type": "claims.raw_type_label",
+    "cross_claim_votes.vote": "cross_claim_votes.raw_vote_label",
+    "cross_claim_votes.confidence": "cross_claim_votes.raw_confidence_label",
+    "gsae_observation.classification_bucket": "gsae_observation.raw_classification_bucket_label",
+    "gsae_observation.severity_toward_subject": "gsae_observation.raw_severity_toward_subject_label",
+    "gsae_observation.severity_toward_counterparty": "gsae_observation.raw_severity_toward_counterparty_label",
+    "gsae_observation.confidence_band": "gsae_observation.raw_confidence_band_label",
+}
+
+
+def _build_allowed_paths(
+    error_paths: List[str],
+) -> set:
+    """
+    Build the set of allowed-change paths from validation error paths.
+
+    Error paths like "whole_article_judgment.classification" or "claims[2].type"
+    produce allowed paths for that field plus its raw_* sibling (from explicit map).
+    """
+    allowed = {"expression"}  # always allowed to add/modify
+
+    for path in error_paths:
+        allowed.add(path)
+
+        # Allow raw_* sibling using explicit map (not synthesis).
+        # Indexed paths like "claims[2].type" → strip index to find map key "claims.type",
+        # then re-add the index to get "claims[2].raw_type_label".
+        stripped = re.sub(r'\[\d+\]', '', path)  # "claims[2].type" → "claims.type"
+        raw_sibling = _RAW_SIBLING_MAP.get(stripped)
+        if raw_sibling:
+            # Re-inject the index from the original path into the raw sibling.
+            # e.g. path="claims[2].type", raw_sibling="claims.raw_type_label"
+            #   → "claims[2].raw_type_label"
+            idx_match = re.search(r'\[\d+\]', path)
+            if idx_match:
+                # Insert index after the first segment
+                parent = raw_sibling.split('.')[0]
+                rest = raw_sibling[len(parent):]
+                allowed.add(f"{parent}{idx_match.group()}{rest}")
+            else:
+                allowed.add(raw_sibling)
+
+    return allowed
+
+
+def _nullify_indexed_list(
+    items: List[Any],
+    list_key: str,
+    allowed_paths: set,
+    sentinel: str,
+) -> None:
+    """
+    Sentinel fields on specific list items based on indexed allowed paths.
+
+    Parses paths like "claims[2].type" to sentinel only index 2's "type" field.
+    Does NOT broadcast to all indices — each index must be explicitly allowed.
+    """
+    # Build per-index allowed fields: {2: {"type", "raw_type_label"}, ...}
+    per_index: Dict[int, set] = {}
+    for p in allowed_paths:
+        if not p.startswith(list_key):
+            continue
+        m = re.match(rf'^{re.escape(list_key)}\[(\d+)\]\.(.+)$', p)
+        if m:
+            idx = int(m.group(1))
+            field = m.group(2)
+            per_index.setdefault(idx, set()).add(field)
+
+    for idx, fields in per_index.items():
+        if idx < len(items) and isinstance(items[idx], dict):
+            for f in fields:
+                if f in items[idx]:
+                    items[idx][f] = sentinel
+
+
+def _nullify_allowed_fields(
+    pack: Dict[str, Any],
+    allowed_paths: set,
+) -> Dict[str, Any]:
+    """
+    Deep copy a pack and set all allowed-change fields to a sentinel.
+    The remaining fields can then be compared with == for drift detection.
+    """
+    SENTINEL = "__ALLOWED_CHANGE__"
+    out = copy.deepcopy(pack)
+
+    # Top-level allowed keys
+    for key in list(out.keys()):
+        if key in allowed_paths:
+            out[key] = SENTINEL
+
+    # Nested: whole_article_judgment.*
+    waj = out.get("whole_article_judgment")
+    if isinstance(waj, dict):
+        for key in list(waj.keys()):
+            full_path = f"whole_article_judgment.{key}"
+            if full_path in allowed_paths:
+                waj[key] = SENTINEL
+
+    # Nested: claims[N].field — only sentinel the specific index allowed
+    claims = out.get("claims")
+    if isinstance(claims, list):
+        _nullify_indexed_list(claims, "claims", allowed_paths, SENTINEL)
+
+    # Nested: cross_claim_votes[N].field
+    votes = out.get("cross_claim_votes")
+    if isinstance(votes, list):
+        _nullify_indexed_list(votes, "cross_claim_votes", allowed_paths, SENTINEL)
+
+    # Nested: gsae_observation.*
+    obs = out.get("gsae_observation")
+    if isinstance(obs, dict):
+        for key in list(obs.keys()):
+            full_path = f"gsae_observation.{key}"
+            if full_path in allowed_paths:
+                obs[key] = SENTINEL
+
+    return out
+
+
+def _diff_guard(
+    original: Dict[str, Any],
+    repaired: Dict[str, Any],
+    error_paths: List[str],
+) -> List[str]:
+    """
+    Compare post-translate attempt-1 pack with post-translate attempt-2 pack.
+
+    Only fields in the allowed change set (derived from error_paths) may differ.
+    Returns list of violation descriptions. Empty = repair is clean.
+    """
+    allowed = _build_allowed_paths(error_paths)
+
+    orig_masked = _nullify_allowed_fields(original, allowed)
+    repair_masked = _nullify_allowed_fields(repaired, allowed)
+
+    if orig_masked == repair_masked:
+        return []
+
+    # Find specific differences — drill into nested structures for useful messages
+    violations: List[str] = []
+
+    all_keys = set(list(orig_masked.keys()) + list(repair_masked.keys()))
+    for key in sorted(all_keys):
+        orig_val = orig_masked.get(key)
+        repair_val = repair_masked.get(key)
+        if orig_val == repair_val:
+            continue
+
+        # Drill into dicts to find the specific changed fields
+        if isinstance(orig_val, dict) and isinstance(repair_val, dict):
+            sub_keys = set(list(orig_val.keys()) + list(repair_val.keys()))
+            for sk in sorted(sub_keys):
+                if orig_val.get(sk) != repair_val.get(sk):
+                    violations.append(
+                        f"{key}.{sk} changed during repair (disallowed): "
+                        f"{orig_val.get(sk)!r} → {repair_val.get(sk)!r}"
+                    )
+        # Drill into lists (claims, votes)
+        elif isinstance(orig_val, list) and isinstance(repair_val, list):
+            for i, (a, b) in enumerate(zip(orig_val, repair_val)):
+                if a != b:
+                    if isinstance(a, dict) and isinstance(b, dict):
+                        sub_keys = set(list(a.keys()) + list(b.keys()))
+                        for sk in sorted(sub_keys):
+                            if a.get(sk) != b.get(sk):
+                                violations.append(
+                                    f"{key}[{i}].{sk} changed during repair (disallowed): "
+                                    f"{a.get(sk)!r} → {b.get(sk)!r}"
+                                )
+                    else:
+                        violations.append(
+                            f"{key}[{i}] changed during repair (disallowed)"
+                        )
+            if len(orig_val) != len(repair_val):
+                violations.append(
+                    f"{key} length changed during repair: "
+                    f"{len(orig_val)} → {len(repair_val)}"
+                )
+        else:
+            violations.append(f"{key} changed during repair (disallowed)")
+
+    return violations
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -262,6 +467,8 @@ def compile_reviewer_pack(
         ReviewerPackCompileError: If pack cannot be compiled after max_attempts.
     """
     trace: List[Dict[str, Any]] = []
+    attempt1_pack: Optional[Dict[str, Any]] = None  # saved for diff guard
+    attempt1_error_paths: List[str] = []  # error paths from attempt 1 (for diff guard)
 
     for attempt in range(1, max_attempts + 1):
         pack = copy.deepcopy(raw_pack) if attempt == 1 else raw_pack
@@ -279,8 +486,10 @@ def compile_reviewer_pack(
         })
 
         if translation_failures:
-            # Translation failed — if we have attempts left, try repair
             if attempt < max_attempts:
+                # Save attempt 1 pack + error paths for diff guard comparison
+                attempt1_pack = copy.deepcopy(pack)
+                attempt1_error_paths = [f["path"] for f in translation_failures]
                 repair_prompt = _build_repair_user_prompt(pack, translation_failures)
                 try:
                     raw_pack = call_reviewer_fn(_REPAIR_SYSTEM_PROMPT, repair_prompt)
@@ -298,9 +507,8 @@ def compile_reviewer_pack(
                         parsed_json=pack,
                         translation_trace=trace,
                     ) from e
-                continue  # retry with repaired output
+                continue
 
-            # No attempts left — fail
             raise ReviewerPackCompileError(
                 reviewer_id=reviewer_id,
                 attempt=attempt,
@@ -310,25 +518,53 @@ def compile_reviewer_pack(
                 translation_trace=trace,
             )
 
-        # Step 3: Validate (validator still has legacy normalizer as safety net)
+        # Step 3: Diff guard — if this is a repair attempt, verify substantive
+        # fields were not changed by the model during repair.
+        if attempt > 1 and attempt1_pack is not None:
+            violations = _diff_guard(attempt1_pack, pack, attempt1_error_paths)
+            if violations:
+                diff_errors = [
+                    {
+                        "path": "(diff_guard)",
+                        "got": v,
+                        "expected": "unchanged",
+                        "message": f"Substantive field changed during repair: {v}",
+                    }
+                    for v in violations
+                ]
+                trace.append({
+                    "attempt": attempt,
+                    "stage": "diff_guard_failed",
+                    "violations": violations,
+                })
+                raise ReviewerPackCompileError(
+                    reviewer_id=reviewer_id,
+                    attempt=attempt,
+                    validation_errors=diff_errors,
+                    raw_response_text=None,
+                    parsed_json=pack,
+                    translation_trace=trace,
+                )
+
+        # Step 4: Validate (validator still has legacy normalizer as safety net)
+        # ReviewerPackValidationError = structured enum/type errors → repairable.
+        # Plain RuntimeError = shape/keyset errors → non-repairable, fail-run.
         try:
             validate_reviewer_pack(pack, config)
-        except RuntimeError as e:
-            validation_error = {
-                "path": "(validator)",
-                "got": str(e),
-                "expected": "(see validator contract)",
-                "message": str(e),
-            }
+        except ReviewerPackValidationError as e:
+            # Structured errors with real field paths — repairable
+            validation_errors = e.errors
+            error_paths = [err["path"] for err in validation_errors]
             trace.append({
                 "attempt": attempt,
                 "stage": "validate",
-                "error": str(e),
+                "errors": validation_errors,
             })
 
             if attempt < max_attempts:
-                # Validation failed — try repair
-                repair_prompt = _build_repair_user_prompt(pack, [validation_error])
+                attempt1_pack = copy.deepcopy(pack)
+                attempt1_error_paths = error_paths
+                repair_prompt = _build_repair_user_prompt(pack, validation_errors)
                 try:
                     raw_pack = call_reviewer_fn(_REPAIR_SYSTEM_PROMPT, repair_prompt)
                 except Exception as repair_err:
@@ -340,7 +576,7 @@ def compile_reviewer_pack(
                     raise ReviewerPackCompileError(
                         reviewer_id=reviewer_id,
                         attempt=attempt,
-                        validation_errors=[validation_error],
+                        validation_errors=validation_errors,
                         raw_response_text=None,
                         parsed_json=pack,
                         translation_trace=trace,
@@ -350,7 +586,27 @@ def compile_reviewer_pack(
             raise ReviewerPackCompileError(
                 reviewer_id=reviewer_id,
                 attempt=attempt,
-                validation_errors=[validation_error],
+                validation_errors=validation_errors,
+                raw_response_text=None,
+                parsed_json=pack,
+                translation_trace=trace,
+            ) from e
+        except RuntimeError as e:
+            # Non-structured error (shape/keyset) — non-repairable, fail immediately
+            trace.append({
+                "attempt": attempt,
+                "stage": "validate_fatal",
+                "error": str(e),
+            })
+            raise ReviewerPackCompileError(
+                reviewer_id=reviewer_id,
+                attempt=attempt,
+                validation_errors=[{
+                    "path": "(validator)",
+                    "got": str(e),
+                    "expected": "(see validator contract)",
+                    "message": str(e),
+                }],
                 raw_response_text=None,
                 parsed_json=pack,
                 translation_trace=trace,

@@ -59,12 +59,28 @@ from engine.core.schema_constants import (
     UNCERTAIN_CLASSIFICATIONS,
     VOTE_VALUES,
 )
+from engine.core.errors import ReviewerPackValidationError
 from engine.core.schemas import ReviewerPack
 
 
-def _require(cond: bool, msg: str) -> None:
-    if not cond:
+def _require(
+    cond: bool,
+    msg: str,
+    *,
+    path: str | None = None,
+    expected: str | None = None,
+    got: str | None = None,
+) -> None:
+    if cond:
+        return
+    if path is None:
         raise RuntimeError(msg)
+    raise ReviewerPackValidationError([{
+        "path": path,
+        "expected": expected or "(see schema)",
+        "got": got or "(unknown)",
+        "message": msg,
+    }])
 
 
 def _is_list_of_str(x: Any) -> bool:
@@ -88,10 +104,16 @@ def _validate_whole_article_judgment(pack: Dict[str, Any]) -> None:
     _require(
         classification in ARTICLE_CLASSIFICATIONS,
         f"whole_article_judgment.classification invalid: {classification!r}",
+        path="whole_article_judgment.classification",
+        expected=" | ".join(sorted(ARTICLE_CLASSIFICATIONS)),
+        got=repr(classification),
     )
     _require(
         confidence in CONFIDENCE_VALUES,
         f"whole_article_judgment.confidence invalid: {confidence!r}",
+        path="whole_article_judgment.confidence",
+        expected=" | ".join(sorted(CONFIDENCE_VALUES)),
+        got=repr(confidence),
     )
     _require(_is_list_of_str(eids), "whole_article_judgment.evidence_eids must be list[str]")
 
@@ -145,6 +167,9 @@ def _validate_claims(pack: Dict[str, Any]) -> None:
         _require(
             claim.get("type") in CLAIM_TYPES,
             f"claims[{i}].type invalid: {claim.get('type')!r}",
+            path=f"claims[{i}].type",
+            expected=" | ".join(sorted(CLAIM_TYPES)),
+            got=repr(claim.get("type")),
         )
         _require(
             _is_list_of_str(claim.get("evidence_eids")),
@@ -182,6 +207,9 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
             _require(
                 vote_val in VOTE_VALUES,
                 f"cross_claim_votes[{i}].vote invalid: {vote_val!r}",
+                path=f"cross_claim_votes[{i}].vote",
+                expected=" | ".join(sorted(VOTE_VALUES)),
+                got=repr(vote_val),
             )
 
         conf_val = v.get("confidence")
@@ -189,6 +217,9 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
             _require(
                 conf_val in CONFIDENCE_VALUES,
                 f"cross_claim_votes[{i}].confidence invalid: {conf_val!r}",
+                path=f"cross_claim_votes[{i}].confidence",
+                expected=" | ".join(sorted(CONFIDENCE_VALUES)),
+                got=repr(conf_val),
             )
 
         nd = v.get("near_duplicate_of")
@@ -572,6 +603,9 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
     _require(
         cb in CLASSIFICATION_BUCKET_VALUES,
         f"{pfx}: classification_bucket invalid: {cb!r}",
+        path="gsae_observation.classification_bucket",
+        expected=" | ".join(sorted(CLASSIFICATION_BUCKET_VALUES)),
+        got=repr(cb),
     )
 
     il = packet["intent_level"]
@@ -584,6 +618,9 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
     _require(
         band in SYMMETRY_BAND_VALUES_ORDERED,
         f"{pfx}: confidence_band invalid: {band!r}",
+        path="gsae_observation.confidence_band",
+        expected=" | ".join(SYMMETRY_BAND_VALUES_ORDERED),
+        got=repr(band),
     )
 
     rc = packet["requires_corrob"]
@@ -604,17 +641,26 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
         _require(
             st in SEVERITY_TIER_VALUES_ORDERED,
             f"{pfx}: severity_tier invalid: {st!r}",
+            path="gsae_observation.severity_tier",
+            expected=" | ".join(SEVERITY_TIER_VALUES_ORDERED),
+            got=repr(st),
         )
     else:
         sts = packet["severity_toward_subject"]
         _require(
             sts in SEVERITY_TIER_VALUES_ORDERED,
             f"{pfx}: severity_toward_subject invalid: {sts!r}",
+            path="gsae_observation.severity_toward_subject",
+            expected=" | ".join(SEVERITY_TIER_VALUES_ORDERED),
+            got=repr(sts),
         )
         stc = packet["severity_toward_counterparty"]
         _require(
             stc in SEVERITY_TIER_VALUES_ORDERED,
             f"{pfx}: severity_toward_counterparty invalid: {stc!r}",
+            path="gsae_observation.severity_toward_counterparty",
+            expected=" | ".join(SEVERITY_TIER_VALUES_ORDERED),
+            got=repr(stc),
         )
 
 

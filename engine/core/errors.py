@@ -16,6 +16,22 @@ import json
 from typing import Any, Dict, List, Optional
 
 
+class ReviewerPackValidationError(RuntimeError):
+    """
+    Raised by validate_reviewer_pack when enum/type validation fails.
+
+    Carries structured error dicts [{path, expected, got, message}] so the
+    translator can derive a precise diff-guard allowlist for repair attempts.
+
+    Falls back to plain RuntimeError behaviour (str message) for callers that
+    don't inspect .errors.
+    """
+
+    def __init__(self, errors: List[Dict[str, str]]) -> None:
+        self.errors = errors
+        super().__init__(errors[0]["message"] if errors else "validation error")
+
+
 class ReviewerPackCompileError(Exception):
     """
     Raised when a reviewer pack cannot be compiled into valid Survivor schema

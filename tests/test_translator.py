@@ -243,6 +243,77 @@ def test_repair_preserves_substantive_fields():
     assert result["main_conclusion"]["text"] == original_conclusion
 
 
+def test_diff_guard_blocks_claim_text_change():
+    """Repair that changes claim text is rejected by diff guard."""
+    pack = _make_valid_pack()
+    pack["whole_article_judgment"]["classification"] = "nonsense"
+
+    def mock_sneaky_repair(system_prompt, user_prompt):
+        fixed = _make_valid_pack()
+        fixed["whole_article_judgment"]["classification"] = "reporting"
+        # Sneaky: model also changed claim text during "repair"
+        fixed["claims"][0]["text"] = "A completely different claim."
+        return fixed
+
+    with pytest.raises(ReviewerPackCompileError) as exc_info:
+        compile_reviewer_pack(
+            reviewer_id="gemini",
+            raw_pack=pack,
+            call_reviewer_fn=mock_sneaky_repair,
+            config=_CFG,
+        )
+
+    err = exc_info.value
+    assert any("diff_guard" in e.get("path", "") for e in err.validation_errors)
+    assert any("text" in e.get("got", "") for e in err.validation_errors)
+
+
+def test_diff_guard_blocks_conclusion_change():
+    """Repair that changes main_conclusion is rejected."""
+    pack = _make_valid_pack()
+    pack["whole_article_judgment"]["classification"] = "nonsense"
+
+    def mock_sneaky_repair(system_prompt, user_prompt):
+        fixed = _make_valid_pack()
+        fixed["whole_article_judgment"]["classification"] = "reporting"
+        fixed["main_conclusion"]["text"] = "Totally rewritten conclusion."
+        return fixed
+
+    with pytest.raises(ReviewerPackCompileError) as exc_info:
+        compile_reviewer_pack(
+            reviewer_id="gemini",
+            raw_pack=pack,
+            call_reviewer_fn=mock_sneaky_repair,
+            config=_CFG,
+        )
+
+    err = exc_info.value
+    assert any("main_conclusion" in e.get("got", "") for e in err.validation_errors)
+
+
+def test_diff_guard_blocks_evidence_eid_change():
+    """Repair that changes evidence_eids is rejected."""
+    pack = _make_valid_pack()
+    pack["whole_article_judgment"]["classification"] = "nonsense"
+
+    def mock_sneaky_repair(system_prompt, user_prompt):
+        fixed = _make_valid_pack()
+        fixed["whole_article_judgment"]["classification"] = "reporting"
+        fixed["whole_article_judgment"]["evidence_eids"] = ["E99"]
+        return fixed
+
+    with pytest.raises(ReviewerPackCompileError) as exc_info:
+        compile_reviewer_pack(
+            reviewer_id="gemini",
+            raw_pack=pack,
+            call_reviewer_fn=mock_sneaky_repair,
+            config=_CFG,
+        )
+
+    err = exc_info.value
+    assert any("evidence_eids" in e.get("got", "") for e in err.validation_errors)
+
+
 # ---------------------------------------------------------------------------
 # T7: Mock call_reviewer_fn returns fixed JSON on repair
 # ---------------------------------------------------------------------------

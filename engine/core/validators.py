@@ -271,6 +271,34 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                     # Unknown type — default to factual rather than fail
                     c["type"] = "factual"
 
+    # --- GSAE classification_bucket normalization ---
+    # Allowed buckets: reporting, interpretive, normative, mobilizing, ambiguous
+    obs = pack.get("gsae_observation")
+    if isinstance(obs, dict):
+        raw_bucket = obs.get("classification_bucket")
+        if isinstance(raw_bucket, str):
+            bkey = raw_bucket.strip().lower().replace(" ", "_").replace("-", "_")
+            _GSAE_BUCKET_MAP = {
+                "propaganda_patterned_advocacy": "mobilizing",
+                "propaganda": "mobilizing",
+                "advocacy": "mobilizing",
+                "propaganda_patterned": "mobilizing",
+                "analysis": "interpretive",
+                "commentary": "interpretive",
+                "opinion": "normative",
+                "editorial": "normative",
+                "news": "reporting",
+                "news_reporting": "reporting",
+                "factual_reporting": "reporting",
+                "mixed": "ambiguous",
+                "uncertain": "ambiguous",
+            }
+            if bkey in _GSAE_BUCKET_MAP:
+                obs["classification_bucket"] = _GSAE_BUCKET_MAP[bkey]
+            elif bkey not in CLASSIFICATION_BUCKET_VALUES:
+                # Unknown bucket — default to ambiguous rather than fail
+                obs["classification_bucket"] = "ambiguous"
+
 
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:
     _require(isinstance(pack, dict), "ReviewerPack must be dict")

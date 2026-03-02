@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: streamlit_app.py
-VERSION: 0.3
+VERSION: 0.4
 PURPOSE:
 Streamlit UI for Survivor — The Blunt Report.
 Single page. No tabs. Blunt narrative first, technical details in expander.
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import tempfile
 
 from dotenv import load_dotenv
@@ -34,7 +35,20 @@ try:
 except Exception:
     pass  # st.secrets unavailable (local run) — .env handles it
 
-BUILD_ID = "SURVIVOR_2026-03-01"
+
+def _get_build_id() -> str:
+    """Live git SHA stamp — proves which commit Streamlit Cloud is running."""
+    try:
+        sha = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+        return f"SURVIVOR_{sha}"
+    except Exception:
+        return "SURVIVOR_unknown"
+
+
+BUILD_ID = _get_build_id()
 
 
 # -----------------------------

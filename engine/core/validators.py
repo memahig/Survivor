@@ -221,6 +221,7 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                 "editorial": "analysis",
                 "propaganda": "propaganda-patterned advocacy",
                 "propaganda_patterned": "propaganda-patterned advocacy",
+                "propaganda_patterned_advocacy": "propaganda-patterned advocacy",
             }
             if key in _CLASSIFICATION_MAP:
                 waj["classification"] = _CLASSIFICATION_MAP[key]

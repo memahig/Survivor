@@ -107,6 +107,7 @@ def _render_gsae_section(run_state: Dict[str, Any]) -> str:
 
     # Deterministic mapping: artifact index corresponds to sorted reviewers that have observation
     obs_reviewers = _gsae_observation_reviewers_sorted(phase2)
+    obs_index = {name: i for i, name in enumerate(obs_reviewers)}
 
     subj = _first_gsae_subject(phase2)
     subj_label = None
@@ -148,11 +149,8 @@ def _render_gsae_section(run_state: Dict[str, Any]) -> str:
         qfields = "--"
 
         if has_obs:
-            # Find its artifact index by position in obs_reviewers
-            try:
-                idx = obs_reviewers.index(reviewer)
-            except ValueError:
-                idx = None
+            # Find its artifact index via dict map (matches extract_gsae_observations ordering)
+            idx = obs_index.get(reviewer)
 
             art = None
             if idx is not None and idx < len(artifacts):
@@ -161,13 +159,14 @@ def _render_gsae_section(run_state: Dict[str, Any]) -> str:
             if isinstance(art, dict):
                 status = str(art.get("symmetry_status", "UNKNOWN"))
                 delta = art.get("delta", "--")
-                qfields = art.get("quarantine_fields", []) or []
+                qfields_raw = art.get("quarantine_fields", []) or []
+                qfields = ", ".join(str(f) for f in qfields_raw) if qfields_raw else "--"
                 if status == "QUARANTINE":
                     quarantined.append(reviewer)
             else:
                 status = "UNKNOWN"
                 delta = "--"
-                qfields = []
+                qfields = "--"
 
         lines.append(
             f"| {reviewer} | {'yes' if has_obs else 'no'} | {status} | {delta} | {qfields} |\n"

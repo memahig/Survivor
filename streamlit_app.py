@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
 FILE: streamlit_app.py
-VERSION: 0.2
+VERSION: 0.3
 PURPOSE:
 Streamlit UI for Survivor — The Blunt Report.
 Single page. No tabs. Blunt narrative first, technical details in expander.
 
 ARCHITECTURE:
 - Calls engine.core.pipeline.run_pipeline() with a temp directory.
-- Renders Blunt narrative via engine.render.blunt_biaslens.
+- Renders Blunt narrative via engine.render.blunt_bundle.
 - Falls back to technical report.md if Blunt renderer fails.
+- Surfaces renderer errors in Technical details (never silently swallows).
 - Password-gated via dual-source: st.secrets (Cloud) or .env (local).
 """
 
@@ -77,13 +78,16 @@ st.title("The Blunt Report")
 st.caption(f"Build: {BUILD_ID} | auth: ok")
 st.write("A multi-reviewer pipeline that reports what can be responsibly recovered from an article.")
 
-# Logout in sidebar (minimal)
+# Sidebar: logout + debug toggles
 with st.sidebar:
     if st.session_state.get("authenticated"):
         if st.button("Logout", use_container_width=True):
             st.session_state.pop("authenticated", None)
             st.session_state.pop("_auth_pwd", None)
             st.rerun()
+    st.markdown("---")
+    show_blunt_json = st.checkbox("Show Blunt JSON", value=False)
+    show_run_json = st.checkbox("Show raw run.json", value=False)
 
 
 # -----------------------------
@@ -160,14 +164,13 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                 except json.JSONDecodeError:
                     run_state = None
 
-    # ---- Render Blunt Report first ----
+    # ---- Render Blunt Report via bundle helper ----
     blunt_md = None
+    blunt_obj = None
+    blunt_err = None
     if run_state is not None:
-        try:
-            from engine.render.blunt_biaslens import render_blunt_biaslens
-            blunt_md = render_blunt_biaslens(run_state, config={})
-        except Exception:
-            blunt_md = None
+        from engine.render.blunt_bundle import render_blunt_bundle
+        blunt_md, blunt_obj, blunt_err = render_blunt_bundle(run_state, config={})
 
     st.success("Done.")
 
@@ -183,13 +186,25 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
 
     # ---- Technical details in expander ----
     with st.expander("Technical details", expanded=False):
+        if blunt_err:
+            st.warning(blunt_err)
+
         if report_md:
             st.markdown(report_md)
         if debug_md:
             st.markdown("\n---\n")
             st.markdown(debug_md)
-        if run_json_str:
+
+        if show_blunt_json and blunt_obj is not None:
             st.markdown("\n---\n")
+            st.subheader("Blunt Report JSON")
+            st.code(json.dumps(blunt_obj, indent=2, ensure_ascii=False), language="json")
+        elif show_blunt_json and blunt_obj is None:
+            st.info("Blunt JSON not available (renderer not installed).")
+
+        if show_run_json and run_json_str:
+            st.markdown("\n---\n")
+            st.subheader("Raw run.json")
             st.code(run_json_str, language="json")
 
 

@@ -200,8 +200,34 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
 # ---------------------------------------------------------------------------
 
 
+def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
+    """Normalize common LLM drift in reviewer output before strict validation."""
+    waj = pack.get("whole_article_judgment")
+    if not isinstance(waj, dict):
+        return
+    raw = waj.get("classification")
+    if not isinstance(raw, str):
+        return
+    key = raw.strip().lower()
+    # Map common LLM synonyms to canonical enum values.
+    _CLASSIFICATION_MAP = {
+        "news": "reporting",
+        "straight_news": "reporting",
+        "news_reporting": "reporting",
+        "factual_reporting": "reporting",
+        "commentary": "analysis",
+        "opinion": "analysis",
+        "editorial": "analysis",
+        "propaganda": "propaganda-patterned advocacy",
+        "propaganda_patterned": "propaganda-patterned advocacy",
+    }
+    if key in _CLASSIFICATION_MAP:
+        waj["classification"] = _CLASSIFICATION_MAP[key]
+
+
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:
     _require(isinstance(pack, dict), "ReviewerPack must be dict")
+    _normalize_reviewer_pack(pack)
     # (v0.2.1) reviewer must be a non-empty str
     reviewer = pack.get("reviewer")
     _require(isinstance(reviewer, str) and reviewer.strip(), "ReviewerPack.reviewer missing/invalid")

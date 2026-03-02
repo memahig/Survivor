@@ -123,7 +123,7 @@ go = st.button("Run", use_container_width=True)
 # -----------------------------
 def _run_survivor(*, url: str | None = None, text_content: str | None = None) -> None:
     """Run the Survivor pipeline and display the Blunt Report."""
-    with st.spinner("Running Survivor pipeline (this may take 1-2 minutes)..."):
+    with st.spinner("Generating Blunt Report\u2026"):
         try:
             from engine.core.pipeline import run_pipeline
         except ImportError as e:

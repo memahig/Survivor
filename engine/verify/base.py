@@ -18,7 +18,15 @@ CONTRACT:
 
 from __future__ import annotations
 
-from typing import Any, Dict, FrozenSet
+from typing import Any, Dict, FrozenSet, Literal
+
+
+# ---------------------------------------------------------------------------
+# Type aliases (used by claim_classifier and verification layer)
+# ---------------------------------------------------------------------------
+
+ClaimKind = Literal["world_fact", "document_content"]
+Checkability = Literal["checkable", "unknown"]
 
 
 # ---------------------------------------------------------------------------

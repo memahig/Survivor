@@ -18,7 +18,7 @@ CONTRACT:
 
 from __future__ import annotations
 
-from typing import Any, Dict, FrozenSet, Literal
+from typing import Any, Dict, FrozenSet, List, Literal, TypedDict
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +27,29 @@ from typing import Any, Dict, FrozenSet, Literal
 
 ClaimKind = Literal["world_fact", "document_content"]
 Checkability = Literal["checkable", "unknown"]
+
+CHECKABILITY_VALUES: FrozenSet[str] = frozenset({"checkable", "unknown"})
+
+
+# ---------------------------------------------------------------------------
+# Typed dicts for verification output
+# ---------------------------------------------------------------------------
+
+class VerificationResult(TypedDict, total=False):
+    claim_id: str
+    claim_text: str
+    claim_kind: str
+    verification_status: str
+    confidence: str
+    authority_sources: List[Dict[str, Any]]
+    method_note: str
+    checked_at: str
+
+
+class VerificationPack(TypedDict, total=False):
+    enabled: bool
+    results: List[VerificationResult]
+    note: str
 
 
 # ---------------------------------------------------------------------------

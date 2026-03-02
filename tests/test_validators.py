@@ -305,11 +305,11 @@ def test_invalid_waj_confidence_raises():
         validate_reviewer_pack(pack, _CFG)
 
 
-def test_invalid_claim_type_raises():
+def test_unknown_claim_type_normalized_to_factual():
     claim = _make_claim(ctype="speculative")
     pack = _make_pack(claims=[claim])
-    with pytest.raises(RuntimeError, match="type invalid"):
-        validate_reviewer_pack(pack, _CFG)
+    validate_reviewer_pack(pack, _CFG)  # must not raise — normalizer maps to factual
+    assert pack["claims"][0]["type"] == "factual"
 
 
 def test_all_valid_claim_types_accepted():

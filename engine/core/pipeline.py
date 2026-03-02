@@ -31,6 +31,7 @@ from engine.core.validators import validate_run
 from engine.render.report import render_report
 from engine.render.debug_report import render_debug
 from engine.verify.router import run_verification
+from engine.core.divergence_radar import compute_divergence_radar
 from engine.eo.gsae_apply import apply_gsae_quarantine
 from engine.eo.gsae_process import run_gsae_tier_c
 
@@ -168,6 +169,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     if gsae_block is not None:
         run_state["gsae"] = gsae_block
 
+    run_state["divergence_radar"] = compute_divergence_radar(run_state)
     run_state["verification"] = run_verification(run_state, config)
     validate_run(run_state, config)
 

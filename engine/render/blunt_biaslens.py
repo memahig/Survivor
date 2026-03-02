@@ -227,6 +227,20 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
         symmetry["settings"] = _sd(gsae.get("settings"))
         symmetry["artifacts_count"] = len(_sl(gsae.get("artifacts")))
 
+    # Divergence radar
+    radar = _sd(run_state.get("divergence_radar"))
+    divergence: Dict[str, Any] = {"status": "not_run"}
+    if radar.get("status") == "run":
+        divergence = {
+            "status": "run",
+            "whole_article_conflict": radar.get("whole_article_conflict"),
+            "central_claim_instability": radar.get("central_claim_instability"),
+            "unsupported_core_rate": radar.get("unsupported_core_rate"),
+            "undetermined_core_rate": radar.get("undetermined_core_rate"),
+            "gsae_quarantine_count": radar.get("gsae_quarantine_count"),
+            "notes": _sl(radar.get("notes")),
+        }
+
     return {
         "article": {
             "id": article.get("id"),
@@ -240,6 +254,7 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
         },
         "commented_lines": commented,
         "symmetry": symmetry,
+        "divergence_radar": divergence,
         "modules": {
             "omissions": (
                 "present_in_phase2_packets"
@@ -444,6 +459,59 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
             lines.append("No symmetry observations were available for evaluation.\n")
 
     lines.append("\n---\n")
+
+    # ---- Divergence radar ----
+    radar = _sd(run_state.get("divergence_radar"))
+    if radar.get("status") == "run":
+        lines.append("## Divergence radar\n")
+
+        wac = radar.get("whole_article_conflict", "low")
+        cci = radar.get("central_claim_instability", "low")
+        qcount = radar.get("gsae_quarantine_count", 0)
+
+        lines.append(f"- Whole-article stability: **{wac}**\n")
+        lines.append(f"- Core-claim stability: **{cci}**\n")
+
+        unsup_rate = radar.get("unsupported_core_rate", 0.0)
+        undet_rate = radar.get("undetermined_core_rate", 0.0)
+        if unsup_rate > 0 or undet_rate > 0:
+            lines.append(
+                f"  - Unsupported core rate: {unsup_rate:.0%}, "
+                f"undetermined core rate: {undet_rate:.0%}\n"
+            )
+
+        if qcount > 0:
+            lines.append(
+                f"- Symmetry enforcement: **Quarantine occurred** "
+                f"({qcount} reviewer(s) removed from symmetry pool)\n"
+            )
+        else:
+            lines.append("- Symmetry enforcement: No quarantines\n")
+
+        radar_notes = _sl(radar.get("notes"))
+        if radar_notes:
+            lines.append("\n")
+            for note in radar_notes:
+                lines.append(f"  > {_s(note)}\n")
+
+        # Net effect summary
+        if wac == "high" or cci == "high":
+            lines.append(
+                "\n**Net effect:** This run cannot recover a single stable story "
+                "without revisiting the source evidence anchors.\n"
+            )
+        elif wac == "moderate" or cci == "moderate":
+            lines.append(
+                "\n**Net effect:** Partial convergence. Some claims are stable, "
+                "but the overall interpretation has unresolved variance.\n"
+            )
+        else:
+            lines.append(
+                "\n**Net effect:** Reviewers converge. The recovered story structure "
+                "is stable within normal interpretive variance.\n"
+            )
+
+        lines.append("\n---\n")
 
     # ---- Omissions ----
     lines.append("## Omissions\n")

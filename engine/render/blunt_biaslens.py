@@ -331,9 +331,21 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
     arena = _sd(_sd(adjudicated.get("claim_track")).get("arena"))
     groups = [_sd(g) for g in _sl(arena.get("adjudicated_claims"))]
 
-    supported = [g for g in groups if str(g.get("adjudication")).lower() == "supported"]
-    unsupported = [g for g in groups if str(g.get("adjudication")).lower() == "unsupported"]
-    undetermined = [g for g in groups if str(g.get("adjudication")).lower() == "undetermined"]
+    # Derive support counts from group-level vote tallies, not adjudication labels.
+    # adjudication is kept/rejected/downgraded; votes are supported/unsupported.
+    supported = []
+    unsupported = []
+    undetermined = []
+    for g in groups:
+        tally = _sd(g.get("tally"))
+        s = tally.get("supported_votes", 0)
+        u = tally.get("unsupported_votes", 0)
+        if s > u:
+            supported.append(g)
+        elif u > s:
+            unsupported.append(g)
+        else:
+            undetermined.append(g)
 
     lines.append("## Extractive summary of what the article says\n")
     if not groups:

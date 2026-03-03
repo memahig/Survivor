@@ -170,10 +170,17 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                 st.error(f"Pipeline error: {e}")
                 compile_err_path = os.path.join(tmpdir, "compile_error.json")
                 if os.path.exists(compile_err_path):
-                    with open(compile_err_path, "r", encoding="utf-8") as _f:
-                        st.expander("Compile error detail", expanded=True).code(
-                            _f.read(), language="json"
-                        )
+                    try:
+                        with open(compile_err_path, "r", encoding="utf-8") as _f:
+                            _ced = json.load(_f)
+                        with st.expander("Compile error detail", expanded=True):
+                            st.write(f"**Reviewer:** {_ced.get('reviewer_id')} | **Attempt:** {_ced.get('attempt')}")
+                            st.subheader("Validation errors")
+                            st.json(_ced.get("validation_errors", []))
+                            st.subheader("Translation trace")
+                            st.json(_ced.get("translation_trace", []))
+                    except Exception as _read_err:
+                        st.warning(f"Could not read compile_error.json: {_read_err}")
                 return
 
             # Read back generated files

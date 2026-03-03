@@ -65,6 +65,25 @@ def _write_compile_error_report(error: ReviewerPackCompileError, outdir: str) ->
     except Exception:
         pass  # best-effort; don't mask the original error
 
+    # Always print to stdout so Streamlit Cloud logs capture it.
+    try:
+        import sys
+        d = error.to_debug_dict()
+        print(
+            f"[COMPILE_ERROR] reviewer={d['reviewer_id']} attempt={d['attempt']}",
+            file=sys.stderr,
+        )
+        print(
+            "[COMPILE_ERROR] validation_errors=" + json.dumps(d["validation_errors"], default=str),
+            file=sys.stderr,
+        )
+        print(
+            "[COMPILE_ERROR] translation_trace=" + json.dumps(d["translation_trace"], default=str),
+            file=sys.stderr,
+        )
+    except Exception:
+        pass
+
 
 def _build_reviewers_from_config(config: Dict[str, Any]) -> List[Any]:
     enabled = config.get("reviewers_enabled", [])

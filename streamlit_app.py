@@ -168,6 +168,12 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                 )
             except Exception as e:
                 st.error(f"Pipeline error: {e}")
+                compile_err_path = os.path.join(tmpdir, "compile_error.json")
+                if os.path.exists(compile_err_path):
+                    with open(compile_err_path, "r", encoding="utf-8") as _f:
+                        st.expander("Compile error detail", expanded=True).code(
+                            _f.read(), language="json"
+                        )
                 return
 
             # Read back generated files

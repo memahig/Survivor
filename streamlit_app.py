@@ -116,19 +116,25 @@ with st.sidebar:
 # -----------------------------
 # Input — single radio, one input, one button
 # -----------------------------
-mode = st.radio("Input", ["URL", "Upload text file"], horizontal=True)
+mode = st.radio("Input", ["URL", "Paste / upload text"], horizontal=True)
 
 url = ""
 raw_text = ""
 if mode == "URL":
     url = st.text_input("Article URL", value="", placeholder="https://...")
 else:
-    uploaded = st.file_uploader(
-        "Upload article as a plain .txt file",
-        type=["txt"],
-        help="Copy the article text into a .txt file and upload it here.",
+    pasted = st.text_area(
+        "Paste article text",
+        height=260,
+        placeholder="Paste the full article text here (.txt or .md).",
     )
-    if uploaded is not None:
+    uploaded = st.file_uploader(
+        "Or upload a file (.txt or .md)",
+        type=["txt", "md"],
+    )
+    if pasted.strip():
+        raw_text = pasted
+    elif uploaded is not None:
         raw_text = uploaded.read().decode("utf-8", errors="replace")
 
 go = st.button("Run", use_container_width=True)
@@ -246,6 +252,6 @@ if go:
     else:
         t = (raw_text or "").strip()
         if not t:
-            st.warning("Please upload a .txt file.")
+            st.warning("Please paste text or upload a .txt / .md file.")
         else:
             _run_survivor(text_content=t)

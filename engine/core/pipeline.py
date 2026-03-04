@@ -132,6 +132,11 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     normalized = normalize_text(article["text"])
     evidence_bank = build_evidence_bank(normalized, config)
 
+    available_eids = [
+        it["eid"] for it in evidence_bank.get("items", [])
+        if isinstance(it, dict) and isinstance(it.get("eid"), str)
+    ]
+
     reviewers = _build_reviewers_from_config(config)
 
     # ---------------------------
@@ -155,6 +160,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 raw_pack=raw_pack,
                 call_reviewer_fn=reviewer._call_json,
                 config=config,
+                available_eids=available_eids,
             )
         except ReviewerPackCompileError as e:
             _write_compile_error_report(e, outdir)
@@ -193,6 +199,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 raw_pack=raw_pack,
                 call_reviewer_fn=reviewer._call_json,
                 config=config,
+                available_eids=available_eids,
             )
         except ReviewerPackCompileError as e:
             _write_compile_error_report(e, outdir)

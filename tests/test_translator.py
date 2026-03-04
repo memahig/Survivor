@@ -81,9 +81,9 @@ def _never_called(system_prompt, user_prompt):
 # ---------------------------------------------------------------------------
 
 def test_invalid_enum_triggers_repair_and_produces_canonical():
-    """Pack with 'opinion' classification (not a canonical value) triggers repair."""
+    """Pack with 'investigative' classification (not canonical, not in normalizer) triggers repair."""
     pack = _make_valid_pack()
-    pack["whole_article_judgment"]["classification"] = "opinion"  # invalid
+    pack["whole_article_judgment"]["classification"] = "investigative"  # not in normalizer map or canonical set
 
     call_count = [0]
 
@@ -319,15 +319,16 @@ def test_diff_guard_blocks_evidence_eid_change():
 # ---------------------------------------------------------------------------
 
 def test_repair_call_receives_error_and_enum_contract():
+    """Use confidence (not handled by normalizer) to trigger repair and verify prompt format."""
     pack = _make_valid_pack()
-    pack["claims"][0]["type"] = "stated_position"  # not canonical, not lossless alias
+    pack["whole_article_judgment"]["confidence"] = "very_sure"  # not canonical, not in normalizer
 
     captured_prompts = []
 
     def mock_repair(system_prompt, user_prompt):
         captured_prompts.append((system_prompt, user_prompt))
         fixed = _make_valid_pack()
-        fixed["claims"][0]["type"] = "normative"
+        fixed["whole_article_judgment"]["confidence"] = "high"
         return fixed
 
     result = compile_reviewer_pack(
@@ -341,13 +342,13 @@ def test_repair_call_receives_error_and_enum_contract():
     system_prompt, user_prompt = captured_prompts[0]
 
     # Repair prompt contains the error
-    assert "stated_position" in user_prompt
-    assert "claims" in user_prompt
+    assert "very_sure" in user_prompt
+    assert "whole_article_judgment" in user_prompt
 
     # Repair prompt contains enum contract
     assert "ALLOWED ENUM VALUES" in user_prompt
 
-    assert result["claims"][0]["type"] == "normative"
+    assert result["whole_article_judgment"]["confidence"] == "high"
 
 
 # ---------------------------------------------------------------------------

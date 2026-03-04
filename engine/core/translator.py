@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/translator.py
-VERSION: 1.0
+VERSION: 1.0.1
 PURPOSE:
 Universal translator + one-shot repair gate for Survivor reviewer packs.
 
@@ -15,6 +15,20 @@ CONTRACT:
 - Repair is focusing: may only fix schema/enum/type issues, not substantive judgments.
 - Fail-run after max_attempts with ReviewerPackCompileError carrying full debug.
 - No I/O except through call_reviewer_fn (passed in by caller).
+
+v1.0.1 CHANGE:
+- Semantic normalizer (normalize_reviewer_pack) called BEFORE annotate and translate.
+  This catches LLM synonym drift (e.g. "assertion" → "factual") before the lossless
+  translator, preventing wasted repair attempts. raw_* fields capture post-normalization
+  values (canonical intent, not drift labels).
+- _build_repair_user_prompt accepts available_eids kwarg; injects EID list when
+  error_code == "missing_whole_article_evidence".
+- compile_reviewer_pack accepts available_eids kwarg, threaded to repair prompt builds.
+
+NOTE: normalize_reviewer_pack() intentionally absorbs certain semantic "near-enum" labels.
+As a result, some values that previously triggered repair (e.g., "opinion") will no longer
+do so. Repair-trigger tests must use values NOT mapped by the normalizer, or use fields
+the normalizer does not handle (e.g., whole_article_judgment.confidence).
 """
 
 from __future__ import annotations
@@ -22,16 +36,15 @@ from __future__ import annotations
 import copy
 import json
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from engine.core.errors import ReviewerPackCompileError, ReviewerPackValidationError
 from engine.core.translation_rules import (
-    CANONICAL_ENUMS,
     build_enum_contract_text,
     build_error_enum_text,
     translate_field,
 )
-from engine.core.validators import validate_reviewer_pack
+from engine.core.validators import normalize_reviewer_pack, validate_reviewer_pack
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +200,18 @@ def _translate_pack(pack: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Error code helper
+# ---------------------------------------------------------------------------
+
+def _has_error_code(failures: List[Dict[str, Any]], code: str) -> bool:
+    """Check whether any failure dict carries a specific error_code."""
+    for f in failures:
+        if isinstance(f, dict) and f.get("error_code") == code:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Repair prompt builder
 # ---------------------------------------------------------------------------
 
@@ -201,6 +226,8 @@ _REPAIR_SYSTEM_PROMPT = (
 def _build_repair_user_prompt(
     raw_pack: Dict[str, Any],
     failures: List[Dict[str, Any]],
+    *,
+    available_eids: Optional[List[str]] = None,
 ) -> str:
     """Build the repair prompt with errors + enum contract."""
     lines = [
@@ -213,14 +240,30 @@ def _build_repair_user_prompt(
         "ERRORS:",
     ]
     for f in failures:
-        lines.append(f"- {f['path']}: got {f['got']!r}")
-        lines.append(f"  Allowed values: {f['expected']}")
+        path = f.get("path", "(unknown_path)")
+        got = f.get("got", "(unknown)")
+        expected = f.get("expected", "(see schema)")
+        error_code = f.get("error_code")
+        lines.append(f"- {path}: got {got!r}")
+        lines.append(f"  Allowed values: {expected}")
+        if error_code:
+            lines.append(f"  error_code: {error_code}")
 
     lines.append("")
     lines.append("If you need to express nuance beyond the enum, add an \"expression\"")
     lines.append("key at the top level with free-text commentary. This field is permissive.")
     lines.append("")
     lines.append(build_enum_contract_text())
+
+    # Special injection: missing whole-article evidence list
+    if _has_error_code(failures, "missing_whole_article_evidence"):
+        lines.append("")
+        lines.append("AVAILABLE_EIDS (use these exact strings when populating evidence_eids):")
+        if available_eids:
+            lines.append(json.dumps(available_eids, indent=2, ensure_ascii=False))
+        else:
+            lines.append("[]  (No available_eids provided; you must still supply a non-empty list of valid EIDs if possible.)")
+
     lines.append("")
     lines.append("ORIGINAL JSON (fix and return):")
     lines.append(json.dumps(raw_pack, indent=2, ensure_ascii=False))
@@ -448,15 +491,17 @@ def compile_reviewer_pack(
     config: Dict[str, Any],
     *,
     max_attempts: int = 2,
+    available_eids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Compile a raw reviewer pack into a validated Survivor pack.
 
     1. Annotate raw_* fields
-    2. Translate enum fields (lossless-only)
-    3. Validate via validate_reviewer_pack
-    4. If invalid: one-shot repair via call_reviewer_fn
-    5. If still invalid: raise ReviewerPackCompileError
+    2. Semantic normalization (drift firewall)
+    3. Translate enum fields (lossless-only)
+    4. Validate via validate_reviewer_pack
+    5. If invalid: one-shot repair via call_reviewer_fn
+    6. If still invalid: raise ReviewerPackCompileError
 
     Args:
         reviewer_id: Name of the reviewer (for error reporting)
@@ -464,6 +509,7 @@ def compile_reviewer_pack(
         call_reviewer_fn: The reviewer's _call_json(system_prompt, user_prompt) method
         config: Pipeline config dict
         max_attempts: 1 (initial only) or 2 (initial + 1 repair). Default: 2.
+        available_eids: List of valid EIDs from evidence bank (for repair prompts).
 
     Returns:
         Validated reviewer pack dict.
@@ -478,10 +524,13 @@ def compile_reviewer_pack(
     for attempt in range(1, max_attempts + 1):
         pack = copy.deepcopy(raw_pack) if attempt == 1 else raw_pack
 
-        # Step 1: Annotate raw_* fields
+        # Step 1: Semantic normalization — catches "assertion" → "factual" etc.
+        normalize_reviewer_pack(pack)
+
+        # Step 2: Annotate raw_* fields (post-normalization for canonical audit)
         _annotate_raw_fields(pack)
 
-        # Step 2: Translate enum fields
+        # Step 3: Lossless translation (formatting variants only)
         translation_failures = _translate_pack(pack)
 
         trace.append({
@@ -494,8 +543,10 @@ def compile_reviewer_pack(
             if attempt < max_attempts:
                 # Save attempt 1 pack + error paths for diff guard comparison
                 attempt1_pack = copy.deepcopy(pack)
-                attempt1_error_paths = [f["path"] for f in translation_failures]
-                repair_prompt = _build_repair_user_prompt(pack, translation_failures)
+                attempt1_error_paths = [f.get("path", "?") for f in translation_failures]
+                repair_prompt = _build_repair_user_prompt(
+                    pack, translation_failures, available_eids=available_eids,
+                )
                 try:
                     raw_pack = call_reviewer_fn(_REPAIR_SYSTEM_PROMPT, repair_prompt)
                 except Exception as e:
@@ -523,7 +574,7 @@ def compile_reviewer_pack(
                 translation_trace=trace,
             )
 
-        # Step 3: Diff guard — if this is a repair attempt, verify substantive
+        # Step 4: Diff guard — if this is a repair attempt, verify substantive
         # fields were not changed by the model during repair.
         if attempt > 1 and attempt1_pack is not None:
             violations = _diff_guard(attempt1_pack, pack, attempt1_error_paths)
@@ -551,7 +602,7 @@ def compile_reviewer_pack(
                     translation_trace=trace,
                 )
 
-        # Step 4: Validate (validator still has legacy normalizer as safety net)
+        # Step 5: Validate (validator still has legacy normalizer as safety net)
         # ReviewerPackValidationError = structured enum/type errors → repairable.
         # Plain RuntimeError = shape/keyset errors → non-repairable, fail-run.
         try:
@@ -559,7 +610,7 @@ def compile_reviewer_pack(
         except ReviewerPackValidationError as e:
             # Structured errors with real field paths — repairable
             validation_errors = e.errors
-            error_paths = [err["path"] for err in validation_errors]
+            error_paths = [err.get("path", "?") for err in validation_errors]
             trace.append({
                 "attempt": attempt,
                 "stage": "validate",
@@ -569,7 +620,9 @@ def compile_reviewer_pack(
             if attempt < max_attempts:
                 attempt1_pack = copy.deepcopy(pack)
                 attempt1_error_paths = error_paths
-                repair_prompt = _build_repair_user_prompt(pack, validation_errors)
+                repair_prompt = _build_repair_user_prompt(
+                    pack, validation_errors, available_eids=available_eids,
+                )
                 try:
                     raw_pack = call_reviewer_fn(_REPAIR_SYSTEM_PROMPT, repair_prompt)
                 except Exception as repair_err:

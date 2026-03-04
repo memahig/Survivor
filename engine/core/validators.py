@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/validators.py
-VERSION: 0.2.1
+VERSION: 0.2.2
 PURPOSE:
 Fail-closed validators for Survivor run_state and reviewer packs.
 
@@ -29,6 +29,13 @@ CHANGES IN v0.2.1:
 - EvidenceBank bounds check: cs and ce <= len(normalized_text) before slicing.
 - cross_claim_votes: claim_id must be non-empty str.
 - _collect_eids: replaced recursive impl with iterative + 200k node cap.
+
+CHANGES IN v0.2.2:
+- whole_article_judgment.evidence_eids emptiness failure is now structured
+  (path/expected/got + error_code=missing_whole_article_evidence) so Repair Gate can run.
+- Export normalize_reviewer_pack() (public) and keep _normalize_reviewer_pack alias for backwards compat.
+- validate_reviewer_pack now calls normalize_reviewer_pack().
+- Remove unused ReviewerPack import.
 """
 
 from __future__ import annotations
@@ -60,7 +67,6 @@ from engine.core.schema_constants import (
     VOTE_VALUES,
 )
 from engine.core.errors import ReviewerPackValidationError
-from engine.core.schemas import ReviewerPack
 
 
 def _require(
@@ -70,17 +76,21 @@ def _require(
     path: str | None = None,
     expected: str | None = None,
     got: str | None = None,
+    error_code: str | None = None,
 ) -> None:
     if cond:
         return
     if path is None:
         raise RuntimeError(msg)
-    raise ReviewerPackValidationError([{
+    err: Dict[str, str] = {
         "path": path,
         "expected": expected or "(see schema)",
         "got": got or "(unknown)",
         "message": msg,
-    }])
+    }
+    if error_code is not None:
+        err["error_code"] = error_code
+    raise ReviewerPackValidationError([err])
 
 
 def _is_list_of_str(x: Any) -> bool:
@@ -136,6 +146,10 @@ def _validate_whole_article_judgment(pack: Dict[str, Any]) -> None:
         _require(
             len(eids) > 0,
             "whole_article_judgment.evidence_eids must be non-empty unless classification is uncertain or reporting",
+            path="whole_article_judgment.evidence_eids",
+            expected="non-empty list[str] of EvidenceBank EIDs (unless classification is uncertain/reporting)",
+            got=repr(eids),
+            error_code="missing_whole_article_evidence",
         )
 
     # (C) Integrity Scale — validate if the field is present in waj.
@@ -230,16 +244,18 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
 
 
 # ---------------------------------------------------------------------------
-# validate_reviewer_pack
+# normalize + validate_reviewer_pack
 # ---------------------------------------------------------------------------
 
 
-def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
-    """LEGACY SAFETY NET — primary normalization is now in engine/core/translator.py.
+def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
+    """Semantic normalizer — drift firewall for LLM enum outputs.
 
-    This function remains as a fail-safe in case the translator misses something.
-    No new aliases should be added here. All new translation rules go in
-    engine/core/translation_rules.py (lossless-only).
+    Idempotent: safe to call multiple times on the same pack.
+    Called by the translator BEFORE lossless translation so that synonym
+    drift (e.g. "assertion" -> "factual") never wastes a repair attempt.
+    Also called inside validate_reviewer_pack() as a belt-and-suspenders
+    safety net.
     """
     # --- Classification synonyms ---
     waj = pack.get("whole_article_judgment")
@@ -272,6 +288,8 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
         "reporting": "factual",
         "report": "factual",
         "fact": "factual",
+        "assertion": "factual",  # OpenAI commonly outputs "assertion"
+        "statement": "factual",
         "forecast": "predictive",
         "prediction": "predictive",
         "projection": "predictive",
@@ -309,7 +327,6 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                     c["type"] = "factual"
 
     # --- GSAE classification_bucket normalization ---
-    # Allowed buckets: reporting, interpretive, normative, mobilizing, ambiguous
     obs = pack.get("gsae_observation")
     if isinstance(obs, dict):
         raw_bucket = obs.get("classification_bucket")
@@ -333,11 +350,9 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
             if bkey in _GSAE_BUCKET_MAP:
                 obs["classification_bucket"] = _GSAE_BUCKET_MAP[bkey]
             elif bkey not in CLASSIFICATION_BUCKET_VALUES:
-                # Unknown bucket — default to ambiguous rather than fail
                 obs["classification_bucket"] = "ambiguous"
 
         # --- GSAE severity tier normalization ---
-        # Allowed: minimal, moderate, elevated, high, critical
         _SEVERITY_MAP = {
             "low": "minimal",
             "none": "minimal",
@@ -359,7 +374,6 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                     obs[sfield] = "moderate"
 
         # --- GSAE confidence_band normalization ---
-        # Allowed: sb_low, sb_mid, sb_high, sb_max
         _BAND_MAP = {
             "low": "sb_low",
             "medium": "sb_mid",
@@ -378,15 +392,19 @@ def _normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                 obs["confidence_band"] = "sb_mid"
 
 
+# Backwards-compatible alias (internal callers may still use the old name)
+_normalize_reviewer_pack = normalize_reviewer_pack
+
+
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:
     _require(isinstance(pack, dict), "ReviewerPack must be dict")
-    _normalize_reviewer_pack(pack)
+    normalize_reviewer_pack(pack)
+
     # (v0.2.1) reviewer must be a non-empty str
     reviewer = pack.get("reviewer")
     _require(isinstance(reviewer, str) and reviewer.strip(), "ReviewerPack.reviewer missing/invalid")
 
     # (A) Key sets from schema_constants — no hardcoding here.
-    # "reviewer" validated separately above; include in allowed set.
     actual_keys = set(pack.keys())
     allowed_keys = REVIEWER_PACK_REQUIRED_KEYS | REVIEWER_PACK_OPTIONAL_KEYS | {"reviewer"}
 
@@ -590,8 +608,6 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
     _require(isinstance(packet, dict), f"{pfx}: packet must be dict")
 
     keys = set(packet.keys())
-    # Strip raw_* audit fields injected by translator._annotate_raw_fields()
-    # before keyset comparison — these are pass-through annotation fields.
     schema_keys = {k for k in keys if not k.startswith("raw_")}
     is_v02 = schema_keys == GSAE_SYMMETRY_PACKET_REQUIRED_KEYS
     is_v03 = schema_keys == GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
@@ -601,7 +617,6 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
         f"got={sorted(schema_keys)}",
     )
 
-    # --- Common fields (both versions) ---
     cb = packet["classification_bucket"]
     _require(
         cb in CLASSIFICATION_BUCKET_VALUES,
@@ -638,7 +653,6 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
         f"{pfx}: omission_load_bearing must be bool, got {type(olb).__name__}",
     )
 
-    # --- Version-specific severity fields ---
     if is_v02:
         st = packet["severity_tier"]
         _require(
@@ -668,7 +682,6 @@ def _validate_gsae_symmetry_packet(packet: Dict[str, Any]) -> None:
 
 
 def _validate_gsae_subject(subject: Dict[str, Any]) -> None:
-    """Validate a GSAESubject dict — strict keyset, all non-empty str."""
     pfx = "_validate_gsae_subject"
     _require(isinstance(subject, dict), f"{pfx}: subject must be dict")
 
@@ -689,7 +702,6 @@ def _validate_gsae_subject(subject: Dict[str, Any]) -> None:
 
 
 def _validate_gsae_settings(settings: Dict[str, Any]) -> None:
-    """Validate a GSAESettings dict — strict keyset, type/range checks."""
     pfx = "_validate_gsae_settings"
     _require(isinstance(settings, dict), f"{pfx}: settings must be dict")
 
@@ -721,7 +733,6 @@ def _validate_gsae_settings(settings: Dict[str, Any]) -> None:
     _require(eps >= 0, f"{pfx}: epsilon must be >= 0, got {eps}")
     _require(tau >= eps, f"{pfx}: tau must be >= epsilon ({eps}), got {tau}")
 
-    # Version must be validated before weights (weights keyset depends on version).
     ver = settings["version"]
     _require(
         isinstance(ver, str) and ver.strip(),
@@ -731,7 +742,6 @@ def _validate_gsae_settings(settings: Dict[str, Any]) -> None:
     weights = settings["weights"]
     _require(isinstance(weights, dict), f"{pfx}: weights must be dict")
 
-    # Weights keys must match the packet keyset for the declared version.
     if ver == "0.3":
         expected_w_keys = GSAE_SYMMETRY_PACKET_V03_REQUIRED_KEYS
     else:
@@ -756,7 +766,6 @@ def _validate_gsae_settings(settings: Dict[str, Any]) -> None:
 
 
 def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
-    """Validate a GSAESymmetryArtifact dict — strict keyset, status/flag consistency."""
     pfx = "_validate_gsae_symmetry_artifact"
     _require(isinstance(artifact, dict), f"{pfx}: artifact must be dict")
 
@@ -799,7 +808,6 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
         f"{pfx}: tau must be numeric (int/float), got {type(tau).__name__}",
     )
 
-    # soft_symmetry_flag consistency: False for UNKNOWN/PASS, True for SOFT_FLAG/QUARANTINE
     flag = artifact["soft_symmetry_flag"]
     _require(isinstance(flag, bool), f"{pfx}: soft_symmetry_flag must be bool")
 
@@ -814,7 +822,6 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
             f"{pfx}: soft_symmetry_flag must be True when symmetry_status is {status!r}",
         )
 
-    # quarantine_fields: list[str], entries must be known symmetry fields (any version)
     qf = artifact["quarantine_fields"]
     _require(isinstance(qf, list), f"{pfx}: quarantine_fields must be list")
     for i, f_name in enumerate(qf):
@@ -827,14 +834,12 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
             f"{pfx}: quarantine_fields[{i}] invalid field: {f_name!r}",
         )
 
-    # quarantine_fields must be empty unless status == QUARANTINE
     if status != "QUARANTINE":
         _require(
             len(qf) == 0,
             f"{pfx}: quarantine_fields must be empty when symmetry_status is {status!r}",
         )
 
-    # field_deltas: dict, keys must be known symmetry fields (any version)
     fd = artifact["field_deltas"]
     _require(isinstance(fd, dict), f"{pfx}: field_deltas must be dict")
     for fk, fv in fd.items():
@@ -849,7 +854,6 @@ def _validate_gsae_symmetry_artifact(artifact: Dict[str, Any]) -> None:
                 f"got {type(fv).__name__}",
             )
 
-    # notes: list of non-empty strings
     notes = artifact["notes"]
     _require(isinstance(notes, list), f"{pfx}: notes must be list")
     for i, n in enumerate(notes):
@@ -869,9 +873,6 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
     phase2 = run_state["phase2"]
     _require(isinstance(phase2, dict), "run_state.phase2 must be dict")
 
-    # ------------------------------------------------------------------
-    # EID integrity: no phantom EIDs
-    # ------------------------------------------------------------------
     ev = run_state.get("evidence_bank", {})
     items = ev.get("items", [])
     _require(isinstance(items, list), "run_state.evidence_bank.items must be list")
@@ -883,7 +884,6 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
     _collect_eids(run_state.get("phase2", {}), referenced)
     _collect_eids(run_state.get("adjudicated", {}), referenced)
 
-    # (v0.2.1) normalize to stripped EIDs; skip whitespace-only entries
     bad = sorted({
         eid.strip() for eid in referenced
         if isinstance(eid, str) and eid.strip() and eid.strip() not in valid_eids
@@ -891,15 +891,9 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
     if bad:
         raise RuntimeError(f"EID integrity failure: referenced but not in EvidenceBank: {bad}")
 
-    # ------------------------------------------------------------------
-    # (D) EvidenceBank canonical schema validation
-    # ------------------------------------------------------------------
     normalized_text: str | None = run_state.get("normalized_text")
     _validate_evidence_bank_items(items, normalized_text)
 
-    # ------------------------------------------------------------------
-    # Reviewer presence + pack validation
-    # ------------------------------------------------------------------
     enabled = config.get("reviewers_enabled", [])
     _require(
         isinstance(enabled, list) and len(enabled) > 0,
@@ -915,9 +909,6 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
         _require(name in phase2, f"phase2 missing reviewer output: {name}")
         validate_reviewer_pack(phase2[name], config)
 
-    # ------------------------------------------------------------------
-    # (E) Near-duplicate link-rot: build claim registry then validate refs
-    # ------------------------------------------------------------------
     claim_registry: Set[str] = set()
     for name in expected:
         pack = phase2[name]
@@ -928,15 +919,7 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
 
     _validate_near_duplicate_refs(phase2, claim_registry)
 
-    # ------------------------------------------------------------------
-    # Verification layer
-    # ------------------------------------------------------------------
     _validate_verification(run_state, config)
-
-    # ------------------------------------------------------------------
-    # GSAE — Tier C validation (only if GSAE data present in run_state)
-    # Tier A validations above run first and fail first.
-    # ------------------------------------------------------------------
     _validate_gsae_run_state(run_state)
 
 
@@ -946,11 +929,6 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
 
 
 def _validate_gsae_run_state(run_state: Dict[str, Any]) -> None:
-    """Validate all GSAE objects in run_state, if present.
-
-    Gated: does nothing if no GSAE keys exist.
-    If any GSAE key is present, validates all GSAE objects strictly.
-    """
     pfx = "_validate_gsae_run_state"
     gsae = run_state.get("gsae")
     if gsae is None:
@@ -958,12 +936,10 @@ def _validate_gsae_run_state(run_state: Dict[str, Any]) -> None:
 
     _require(isinstance(gsae, dict), f"{pfx}: run_state.gsae must be dict")
 
-    # Settings must be present if gsae block exists
     settings = gsae.get("settings")
     _require(settings is not None, f"{pfx}: run_state.gsae.settings missing")
     _validate_gsae_settings(settings)
 
-    # Packet pairs: list of {packet_a, packet_b} dicts
     pairs = gsae.get("packet_pairs")
     if pairs is not None:
         _require(isinstance(pairs, list), f"{pfx}: run_state.gsae.packet_pairs must be list")
@@ -974,11 +950,10 @@ def _validate_gsae_run_state(run_state: Dict[str, Any]) -> None:
             _validate_gsae_symmetry_packet(pair["packet_a"])
             _validate_gsae_symmetry_packet(pair["packet_b"])
 
-    # Artifacts: list of SymmetryArtifact dicts
     artifacts = gsae.get("artifacts")
     if artifacts is not None:
         _require(isinstance(artifacts, list), f"{pfx}: run_state.gsae.artifacts must be list")
-        for i, art in enumerate(artifacts):
+        for art in artifacts:
             _validate_gsae_symmetry_artifact(art)
 
 
@@ -1010,7 +985,6 @@ def _validate_verification(run_state: Dict[str, Any], config: Dict[str, Any]) ->
             )
         return
 
-    # verification_enabled=True: pack must be present and well-formed
     _require(pack is not None, "run_state.verification missing but verification_enabled=true")
     _require(isinstance(pack, dict), "run_state.verification must be dict")
     _require(
@@ -1021,7 +995,6 @@ def _validate_verification(run_state: Dict[str, Any], config: Dict[str, Any]) ->
     results = pack.get("results")
     _require(isinstance(results, list), "run_state.verification.results must be list")
 
-    # Validate verification_kinds_enabled config
     kinds_enabled_raw = config.get("verification_kinds_enabled", list(CLAIM_KINDS))
     _require(isinstance(kinds_enabled_raw, list), "config.verification_kinds_enabled must be a list")
     kinds_enabled: set[str] = set()
@@ -1067,7 +1040,6 @@ def _validate_verification(run_state: Dict[str, Any], config: Dict[str, Any]) ->
         )
 
         confidence = r.get("confidence")
-        # Normalize case: verification CONFIDENCE_VALUES are uppercase
         if isinstance(confidence, str) and confidence.upper() in VERIFY_CONFIDENCE_VALUES:
             confidence = confidence.upper()
             r["confidence"] = confidence
@@ -1088,7 +1060,6 @@ def _validate_verification(run_state: Dict[str, Any], config: Dict[str, Any]) ->
             f"verification result[{i}].checked_at must be non-empty",
         )
 
-        # (fix) Symmetric authority rule: exempt not_checked_yet AND not_verifiable.
         authority_sources = r.get("authority_sources")
         _require(
             isinstance(authority_sources, list),

@@ -258,7 +258,10 @@ def _build_repair_user_prompt(
     # Special injection: missing whole-article evidence list
     if _has_error_code(failures, "missing_whole_article_evidence"):
         lines.append("")
-        lines.append("AVAILABLE_EIDS (use these exact strings when populating evidence_eids):")
+        lines.append("AVAILABLE_EIDS — for whole_article_judgment.evidence_eids ONLY:")
+        lines.append("Pick one or more EIDs from the list below and place them in")
+        lines.append("whole_article_judgment.evidence_eids. Do NOT modify evidence_eids")
+        lines.append("on claims, article_patterns, main_conclusion, or any other object.")
         if available_eids:
             lines.append(json.dumps(available_eids, indent=2, ensure_ascii=False))
         else:

@@ -3,9 +3,9 @@
 FILE: engine/render/blunt_bundle.py
 VERSION: 0.1
 PURPOSE:
-Single helper that converts Survivor run_state into:
-- Blunt narrative Markdown
-- Blunt structured JSON (when renderer available)
+Legacy helper for backward-compatible blunt rendering.
+Produces Blunt narrative Markdown and structured JSON.
+New code should use render_bundle.py instead.
 
 CONTRACT:
 - Pure render: reads run_state only.
@@ -17,9 +17,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 
-from engine.render.blunt_biaslens import render_blunt_biaslens
-
-from engine.render.blunt_biaslens import render_blunt_biaslens_json
+from engine.render.blunt_biaslens import (
+    render_blunt_biaslens,
+    render_blunt_biaslens_json,
+)
 
 
 def render_blunt_bundle(

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 FILE: streamlit_app.py
-VERSION: 0.4
+VERSION: 0.5
 PURPOSE:
 Streamlit UI for Survivor — The Blunt Report.
-Single page. No tabs. Blunt narrative first, technical details in expander.
+Three tabs: Blunt Report | Audit Report | Machine Trace.
 
 ARCHITECTURE:
 - Calls engine.core.pipeline.run_pipeline() with a temp directory.
-- Renders Blunt narrative via engine.render.blunt_bundle.
+- Renders via engine.render.render_bundle.render_all().
 - Falls back to technical report.md if Blunt renderer fails.
-- Surfaces renderer errors in Technical details (never silently swallows).
+- Surfaces renderer errors as warnings (never silently swallows).
 - Password-gated via dual-source: st.secrets (Cloud) or .env (local).
 """
 
@@ -109,8 +109,6 @@ with st.sidebar:
             st.session_state.pop("_auth_pwd", None)
             st.rerun()
     st.markdown("---")
-    show_blunt_json = st.checkbox("Show Blunt JSON", value=False)
-    show_run_json = st.checkbox("Show raw run.json", value=False)
 
 
 # -----------------------------
@@ -208,48 +206,44 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                 except json.JSONDecodeError:
                     run_state = None
 
-    # ---- Render Blunt Report via bundle helper ----
+    # ---- Render via render_bundle ----
     blunt_md = None
-    blunt_obj = None
-    blunt_err = None
+    audit_md = None
+    enriched = None
+    render_err = None
     if run_state is not None:
-        from engine.render.blunt_bundle import render_blunt_bundle
-        blunt_md, blunt_obj, blunt_err = render_blunt_bundle(run_state, config={})
+        from engine.render.render_bundle import render_all
+        blunt_md, audit_md, enriched, render_err = render_all(run_state, config={})
 
     st.success("Done.")
 
-    if blunt_md:
-        st.markdown(blunt_md)
-    else:
-        st.info("Blunt report renderer not available. Showing technical report below.")
-        if report_md:
+    tab1, tab2, tab3 = st.tabs(["Blunt Report", "Audit Report", "Machine Trace"])
+
+    with tab1:
+        if blunt_md:
+            st.markdown(blunt_md)
+        elif report_md:
+            st.info("Blunt Report not available. Showing technical report.")
             st.markdown(report_md)
         else:
-            st.error("No report was generated.")
-            return
+            st.info("Blunt Report not available.")
 
-    # ---- Technical details in expander ----
-    with st.expander("Technical details", expanded=False):
-        if blunt_err:
-            st.warning(blunt_err)
+    with tab2:
+        if audit_md:
+            st.markdown(audit_md)
+        else:
+            st.info("Audit Report not available.")
 
-        if report_md:
-            st.markdown(report_md)
-        if debug_md:
-            st.markdown("\n---\n")
-            st.markdown(debug_md)
-
-        if show_blunt_json and blunt_obj is not None:
-            st.markdown("\n---\n")
-            st.subheader("Blunt Report JSON")
-            st.code(json.dumps(blunt_obj, indent=2, ensure_ascii=False), language="json")
-        elif show_blunt_json and blunt_obj is None:
-            st.info("Blunt JSON not available (renderer not installed).")
-
-        if show_run_json and run_json_str:
-            st.markdown("\n---\n")
-            st.subheader("Raw run.json")
+    with tab3:
+        if enriched is not None:
+            st.code(json.dumps(enriched, indent=2, default=str), language="json")
+        elif run_json_str:
             st.code(run_json_str, language="json")
+        else:
+            st.info("Machine Trace not available.")
+
+    if render_err:
+        st.warning(f"Renderer warnings: {render_err}")
 
 
 # -----------------------------

@@ -248,13 +248,16 @@ ARTICLE (normalized text):
     def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
         client = self._get_client()
 
+        # Use streaming to avoid "Streaming is required for operations that
+        # may take longer than 10 minutes" error with high max_tokens.
         try:
-            resp = client.messages.create(
+            with client.messages.stream(
                 model=self.model,
                 max_tokens=32768,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
-            )
+            ) as stream:
+                resp = stream.get_final_message()
         except Exception as e:
             raise RuntimeError(f"Anthropic call failed: {e}")
 

@@ -29,6 +29,7 @@ from engine.core.claim_classifier import (
     compute_checkability,
     extract_source_doc_hint,
 )
+from engine.core.forensics_merge import merge_structural_forensics
 
 
 def _conf_weight(conf: str, config: Dict[str, Any]) -> float:
@@ -304,9 +305,13 @@ def adjudicate(phase2_outputs: Dict[str, Dict[str, Any]], config: Dict[str, Any]
     for m in phase2_outputs.keys():
         final_tickets.extend(phase2_outputs[m].get("article_tickets", []))
 
+    # Structural forensics merge (v0.5 — optional fields)
+    structural_forensics = merge_structural_forensics(phase2_outputs)
+
     return {
         "article_track": article_track,
         "claim_track": claim_track,
+        "structural_forensics": structural_forensics,
         "consistency_checks": consistency_checks,
         "final_tickets": final_tickets,
     }

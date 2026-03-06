@@ -48,7 +48,8 @@ def _make_valid_pack(reviewer="openai"):
             "evidence_eids": ["E1"],
         },
         "main_conclusion": {"text": "The article argues X."},
-        "claims": [
+        "pillar_claims": [],
+        "questionable_claims": [
             {
                 "claim_id": f"{reviewer}-C1",
                 "text": "A factual claim.",
@@ -57,6 +58,7 @@ def _make_valid_pack(reviewer="openai"):
                 "centrality": 1,
             },
         ],
+        "background_claims_summary": {"total_claims_estimate": 1, "not_triaged_count": 0},
         "scope_markers": [],
         "causal_links": [],
         "article_patterns": [],
@@ -122,7 +124,7 @@ def test_valid_pack_no_repair_needed():
     )
 
     assert result["whole_article_judgment"]["classification"] == "analysis"
-    assert result["claims"][0]["type"] == "factual"
+    assert result["questionable_claims"][0]["type"] == "factual"
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +183,7 @@ def test_raw_fields_preserved():
 
 def test_raw_fields_on_claims():
     pack = _make_valid_pack()
-    pack["claims"][0]["type"] = "Factual"  # uppercase
+    pack["questionable_claims"][0]["type"] = "Factual"  # uppercase
 
     result = compile_reviewer_pack(
         reviewer_id="openai",
@@ -190,8 +192,8 @@ def test_raw_fields_on_claims():
         config=_CFG,
     )
 
-    assert result["claims"][0]["type"] == "factual"
-    assert result["claims"][0]["raw_type_label"] == "Factual"
+    assert result["questionable_claims"][0]["type"] == "factual"
+    assert result["questionable_claims"][0]["raw_type_label"] == "Factual"
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +228,7 @@ def test_namespace_violation_gsae_bucket_in_classification():
 def test_repair_preserves_substantive_fields():
     pack = _make_valid_pack()
     pack["whole_article_judgment"]["classification"] = "nonsense"
-    original_claim_text = pack["claims"][0]["text"]
+    original_claim_text = pack["questionable_claims"][0]["text"]
     original_conclusion = pack["main_conclusion"]["text"]
 
     def mock_repair(system_prompt, user_prompt):
@@ -241,7 +243,7 @@ def test_repair_preserves_substantive_fields():
         config=_CFG,
     )
 
-    assert result["claims"][0]["text"] == original_claim_text
+    assert result["questionable_claims"][0]["text"] == original_claim_text
     assert result["main_conclusion"]["text"] == original_conclusion
 
 
@@ -254,7 +256,7 @@ def test_diff_guard_blocks_claim_text_change():
         fixed = _make_valid_pack()
         fixed["whole_article_judgment"]["classification"] = "reporting"
         # Sneaky: model also changed claim text during "repair"
-        fixed["claims"][0]["text"] = "A completely different claim."
+        fixed["questionable_claims"][0]["text"] = "A completely different claim."
         return fixed
 
     with pytest.raises(ReviewerPackCompileError) as exc_info:

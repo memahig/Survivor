@@ -58,7 +58,6 @@ class MockReviewer:
                 "total_claims_estimate": len(claims),
                 "not_triaged_count": 0,
             },
-            "claims": claims,  # TEMP(PR1): adjudicator compat; remove in PR2
             "scope_markers": [
                 {"text": "greatest", "marker_type": "greatest", "evidence_eids": ["E1"]}
             ],

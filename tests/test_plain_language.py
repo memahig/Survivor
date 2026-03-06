@@ -87,7 +87,9 @@ def _make_phase2(reviewers_config):
         phase2[name] = {
             "reviewer": name,
             "whole_article_judgment": _make_waj(cls, conf),
-            "claims": claims,
+            "pillar_claims": [],
+            "questionable_claims": claims,
+            "background_claims_summary": {"total_claims_estimate": len(claims), "not_triaged_count": 0},
             "counterfactual_requirements": cfs,
             "cross_claim_votes": [],
             "omission_candidates": [],

@@ -117,7 +117,8 @@ _REVIEWER_PACK = {
         "evidence_eids": ["E1"],
     },
     "main_conclusion": {"text": "The article presents factual analysis."},
-    "claims": [
+    "pillar_claims": [],
+    "questionable_claims": [
         {
             "claim_id": "openai-CL-01",
             "text": "A factual claim.",
@@ -126,6 +127,7 @@ _REVIEWER_PACK = {
             "centrality": 1,
         }
     ],
+    "background_claims_summary": {"total_claims_estimate": 1, "not_triaged_count": 0},
     "scope_markers": [],
     "causal_links": [],
     "article_patterns": [],

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from engine.core.triage_utils import list_triage_claims
+
 
 # -----------------------------
 # Safe helpers
@@ -110,13 +112,13 @@ def _build_evidence_lookup(run_state: Dict[str, Any]) -> Dict[str, str]:
 
 def _build_claim_index(phase2: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """
-    Build claim_id -> {centrality, type, reviewer} from phase2[*].claims.
+    Build claim_id -> {centrality, type, reviewer} from phase2 triage claims.
     Used to approximate "centrality-first" without inventing anything.
     """
     idx: Dict[str, Dict[str, Any]] = {}
     for reviewer in sorted(phase2.keys()):
         pack = _sd(phase2.get(reviewer))
-        for c in _sl(pack.get("claims")):
+        for c in list_triage_claims(pack):
             c = _sd(c)
             cid = _s(c.get("claim_id"))
             if not cid:
@@ -363,7 +365,7 @@ def _render_plain_language_synthesis(
 
     # ---- Block 4: How Survivor combined it ----
     total_claims = sum(
-        len(_sl(_sd(phase2.get(name)).get("claims")))
+        len(list_triage_claims(_sd(phase2.get(name))))
         for name in reviewers
     )
 
@@ -521,7 +523,7 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
         },
         "synthesis": {
             "total_claims": sum(
-                len(_sl(_sd(phase2.get(n)).get("claims")))
+                len(list_triage_claims(_sd(phase2.get(n))))
                 for n in phase2
             ),
             "total_groups": len(groups),

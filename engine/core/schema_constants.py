@@ -41,7 +41,6 @@ REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "gsae_subject",
     "expression",  # Permissive free-text/alternate-label block (v1.0 translator)
     "_policy_warnings",
-    "claims",  # TEMP(PR1): allow legacy 'claims' for adjudicator compatibility; remove in PR2
 })
 
 # ---------------------------------------------------------------------------

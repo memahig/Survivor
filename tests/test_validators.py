@@ -82,7 +82,6 @@ def _make_claim(claim_id="openai-CL-01", text="A factual claim.", ctype="factual
 def _make_pack(
     reviewer="openai",
     waj=None,
-    claims=None,
     votes=None,
     *,
     pillar_claims=None,
@@ -110,16 +109,6 @@ def _make_pack(
         "article_tickets": [],
         "cross_claim_votes": votes if votes is not None else [],
     }
-    # Legacy compat: if caller passes claims=, use legacy bridge path
-    if claims is not None:
-        pack.pop("pillar_claims")
-        pack.pop("questionable_claims")
-        pack.pop("background_claims_summary")
-        pack["claims"] = claims
-    # Also keep "claims" for adjudicator compat (PR1 TEMP)
-    elif "claims" not in pack:
-        all_claims = list(pack["pillar_claims"]) + list(pack["questionable_claims"])
-        pack["claims"] = all_claims
     return pack
 
 
@@ -683,34 +672,6 @@ def test_vote_cleanup_after_truncation():
 # ---------------------------------------------------------------------------
 # Legacy bridge: claims → questionable_claims
 # ---------------------------------------------------------------------------
-
-
-def test_legacy_bridge_converts_claims_to_questionable():
-    """Pack with only 'claims' key → bridged to questionable_claims + warning."""
-    legacy_pack = _make_pack(claims=[_make_claim()])
-    validate_reviewer_pack(legacy_pack, _CFG)
-    assert legacy_pack["questionable_claims"] == [_make_claim()]
-    assert legacy_pack["pillar_claims"] == []
-    warnings = legacy_pack.get("_policy_warnings", [])
-    codes = [w["code"] for w in warnings]
-    assert "legacy_claims_field_used" in codes
-
-
-def test_legacy_bridge_preserves_claims_key():
-    """Legacy bridge must COPY, not move — claims key remains for adjudicator compat."""
-    legacy_pack = _make_pack(claims=[_make_claim()])
-    validate_reviewer_pack(legacy_pack, _CFG)
-    assert "claims" in legacy_pack
-
-
-def test_legacy_bridge_synthesizes_background_summary():
-    """Legacy bridge must create background_claims_summary with correct counts."""
-    claims = [_make_claim(claim_id=f"CL-{i}") for i in range(5)]
-    legacy_pack = _make_pack(claims=claims)
-    validate_reviewer_pack(legacy_pack, _CFG)
-    bcs = legacy_pack["background_claims_summary"]
-    assert bcs["total_claims_estimate"] == 5
-    assert bcs["not_triaged_count"] == 0
 
 
 # ---------------------------------------------------------------------------

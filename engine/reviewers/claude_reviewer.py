@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
+from engine.core.triage_utils import list_triage_claims
 from engine.reviewers.base import ReviewerInputs
 from engine.prompts.builder import build_system_prompt
 
@@ -69,12 +70,12 @@ class ClaudeReviewer:
           - counterfactual_requirements (target_claim_id)
           - cross_claim_votes (claim_id, near_duplicate_of)
         """
-        claims = pack.get("claims", [])
-        if not isinstance(claims, list):
+        all_claims = list_triage_claims(pack)
+        if not all_claims:
             return pack
 
         id_map: Dict[str, str] = {}
-        for c in claims:
+        for c in all_claims:
             if not isinstance(c, dict):
                 continue
             cid = c.get("claim_id")
@@ -151,11 +152,8 @@ ARTICLE (normalized text):
 
         claim_index: Dict[str, Dict[str, Any]] = {}
         for _m, pack in phase1_outputs.items():
-            claims = pack.get("claims", [])
-            if isinstance(claims, list):
-                for c in claims:
-                    if isinstance(c, dict) and c.get("claim_id"):
-                        claim_index[c["claim_id"]] = c
+            for c in list_triage_claims(pack):
+                claim_index[c["claim_id"]] = c
 
         max_nd = int(inp.config.get("max_near_duplicate_links", 3))
 
@@ -285,7 +283,9 @@ ARTICLE (normalized text):
             "omission_candidates",
             "causal_links",
             "scope_markers",
-            "claims",
+            "pillar_claims",
+            "questionable_claims",
+            "background_claims_summary",
             "main_conclusion",
             "whole_article_judgment",
             "evidence_density",

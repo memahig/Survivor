@@ -55,8 +55,11 @@ def _vote(claim_id, vote="supported", conf="medium", nd=None):
 
 def _pack(claims=None, votes=None):
     """Build a phase2 reviewer pack."""
+    cl = claims or []
     return {
-        "claims": claims or [],
+        "pillar_claims": [],
+        "questionable_claims": cl,
+        "background_claims_summary": {"total_claims_estimate": len(cl), "not_triaged_count": 0},
         "cross_claim_votes": votes or [],
     }
 

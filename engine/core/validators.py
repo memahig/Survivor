@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/validators.py
-VERSION: 0.3.0
+VERSION: 0.4.0
 PURPOSE:
 Fail-closed validators for Survivor run_state and reviewer packs.
 
@@ -9,11 +9,13 @@ CONTRACT:
 - Fail-closed except for explicit policy clamps that truncate + emit _policy_warnings.
 - Key sets are imported from engine.core.schema_constants — do not hardcode them here.
 
+CHANGES IN v0.4.0 (Triage Model — PR2):
+- Removed legacy bridge (claims → questionable_claims copy). All packs must now use
+  pillar_claims + questionable_claims + background_claims_summary directly.
+
 CHANGES IN v0.3.0 (Triage Model — PR1):
-- Replace single "claims" list with pillar_claims + questionable_claims +
+- Replace single claims list with pillar_claims + questionable_claims +
   background_claims_summary (triage architecture).
-- Legacy bridge in normalize_reviewer_pack(): claims → questionable_claims (COPY,
-  preserves "claims" key for adjudicator compat until PR2).
 - _validate_claims() → _validate_claim_list(claims, list_name) — parameterized.
 - New: _validate_background_claims_summary() — semi-strict (2 required ints).
 - New: _dedupe_claim_category_collision() — E5 trap, dedupe-to-pillar + warning.
@@ -373,32 +375,9 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
         "predictive_claim": "predictive",
     }
 
-    # --- Legacy bridge: claims → questionable_claims (COPY, keep claims for adjudicator) ---
-    if "claims" in pack and not any(
-        k in pack for k in ("pillar_claims", "questionable_claims", "background_claims_summary")
-    ):
-        legacy_claims = pack.get("claims")
-        if isinstance(legacy_claims, list):
-            pack["pillar_claims"] = []
-            pack["questionable_claims"] = list(legacy_claims)  # COPY, not move
-            triaged_count = sum(1 for c in legacy_claims if isinstance(c, dict))
-            pack["background_claims_summary"] = {
-                "total_claims_estimate": triaged_count,
-                "not_triaged_count": 0,
-            }
-            warnings = pack.setdefault("_policy_warnings", [])
-            warnings.append({
-                "code": "legacy_claims_field_used",
-                "message": (
-                    "Legacy pack used 'claims'. Bridged to triage schema "
-                    "as questionable_claims (audited set)."
-                ),
-            })
-
     # --- Centrality clamping (must be 1, 2, or 3) + claim type normalization ---
-    # Apply to both triage lists (and legacy claims if present)
     _claim_lists_to_normalize = []
-    for key in ("pillar_claims", "questionable_claims", "claims"):
+    for key in ("pillar_claims", "questionable_claims"):
         cl = pack.get(key)
         if isinstance(cl, list):
             _claim_lists_to_normalize.append(cl)

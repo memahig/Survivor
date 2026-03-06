@@ -84,7 +84,8 @@ _RUN_STATE = {
     "phase2": {
         "openai": {
             "reviewer": "openai",
-            "claims": [
+            "pillar_claims": [],
+            "questionable_claims": [
                 {
                     "claim_id": "openai-CL-01",
                     "text": "A factual claim.",
@@ -100,6 +101,7 @@ _RUN_STATE = {
                     "centrality": 2,
                 },
             ],
+            "background_claims_summary": {"total_claims_estimate": 2, "not_triaged_count": 0},
             "cross_claim_votes": [],
         }
     },

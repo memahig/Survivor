@@ -46,6 +46,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from engine.core.triage_utils import list_triage_claims
 from engine.core.voting import build_equivalence_groups, group_members
 
 
@@ -158,7 +159,7 @@ def _check_consensus_paradox(
 
         # Collect eids from the supported claims in this reviewer's own pack
         eids: Set[str] = set()
-        for claim in pack.get("claims", []):
+        for claim in list_triage_claims(pack):
             if not isinstance(claim, dict):
                 continue
             if claim.get("claim_id") in supported_in_group:
@@ -206,7 +207,7 @@ def adjudicate(run_state: Dict[str, Any], config: Dict[str, Any]) -> Dict[str, A
     for reviewer, pack in phase2.items():
         if not isinstance(pack, dict):
             continue
-        for claim in pack.get("claims", []):
+        for claim in list_triage_claims(pack):
             if not isinstance(claim, dict):
                 continue
             claim_id = claim.get("claim_id")

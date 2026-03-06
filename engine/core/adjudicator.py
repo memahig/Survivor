@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
+from engine.core.triage_utils import list_triage_claims
 from engine.core.validators import validate_reviewer_pack
 from engine.core.voting import build_equivalence_groups, group_members, tally_reviewer_votes, decide_status
 from engine.core.claim_classifier import (
@@ -254,7 +255,7 @@ def adjudicate(phase2_outputs: Dict[str, Dict[str, Any]], config: Dict[str, Any]
     }
 
     # Claim track (NOW: adjudicated)
-    claims_by_model = {m: phase2_outputs[m]["claims"] for m in phase2_outputs.keys()}
+    claims_by_model = {m: list_triage_claims(phase2_outputs[m]) for m in phase2_outputs.keys()}
     cross_votes_by_model = {m: phase2_outputs[m]["cross_claim_votes"] for m in phase2_outputs.keys()}
 
     claim_track = {

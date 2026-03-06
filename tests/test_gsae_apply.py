@@ -30,7 +30,9 @@ def _make_pack(reviewer, observation=None):
         "reviewer": reviewer,
         "whole_article_judgment": {"classification": "analysis", "confidence": "high", "evidence_eids": ["E1"]},
         "main_conclusion": {"text": "X."},
-        "claims": [],
+        "pillar_claims": [],
+        "questionable_claims": [],
+        "background_claims_summary": {"total_claims_estimate": 0, "not_triaged_count": 0},
         "scope_markers": [],
         "causal_links": [],
         "article_patterns": [],
@@ -96,7 +98,7 @@ def test_quarantine_removes_observation():
 
     # Rest of the pack must still be intact
     assert result["openai"]["reviewer"] == "openai"
-    assert result["openai"]["claims"] == []
+    assert result["openai"]["questionable_claims"] == []
 
 
 def test_quarantine_others_unaffected():

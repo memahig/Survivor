@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from engine.core.triage_utils import list_triage_claims
+
 
 def _md_list(items: List[str]) -> str:
     if not items:
@@ -253,7 +255,7 @@ def render_report(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
     lines.append("## Major Claims (by reviewer, v0)\n")
     for model in sorted(phase2.keys()):
         pack = _safe_dict(phase2.get(model))
-        claims = _safe_list(pack.get("claims"))
+        claims = list_triage_claims(pack)
         lines.append(f"### {model}\n")
         if not claims:
             lines.append("- (none)\n")

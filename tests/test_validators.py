@@ -816,13 +816,18 @@ def test_argument_integrity_missing_main_conclusion_raises():
         validate_reviewer_pack(pack, _CFG)
 
 
-def test_argument_integrity_unknown_load_bearing_claim_id_raises():
+def test_argument_integrity_foreign_load_bearing_claim_id_stripped():
+    """Foreign claim IDs are normalizer-stripped (not validator-rejected)."""
     pack = _make_pack()
     pack["argument_integrity"] = _make_argument_integrity(
         load_bearing_claim_ids=["FAKE-99"]
     )
-    with pytest.raises(RuntimeError, match="unknown claim_id.*FAKE-99"):
-        validate_reviewer_pack(pack, _CFG)
+    validate_reviewer_pack(pack, _CFG)
+    # Normalizer should have removed the foreign ID
+    assert pack["argument_integrity"]["load_bearing_claim_ids"] == []
+    # And emitted a policy warning
+    warnings = pack.get("_policy_warnings", [])
+    assert any(w.get("code") == "foreign_claim_id_in_argument_integrity" for w in warnings)
 
 
 def test_argument_integrity_invalid_fragility_raises():

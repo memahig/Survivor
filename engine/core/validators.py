@@ -496,6 +496,41 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
             elif band_key not in _BAND_LEGAL:
                 obs["confidence_band"] = "sb_mid"
 
+    # --- argument_integrity claim-ID repair ---
+    # LLMs sometimes hallucinate claim IDs from other reviewers' namespaces
+    # (e.g. Gemini emitting "claude-PC3"). Filter to only IDs that exist in
+    # this reviewer's own pillar_claims + questionable_claims.
+    ai = pack.get("argument_integrity")
+    if isinstance(ai, dict):
+        own_ids: Set[str] = set()
+        for key in ("pillar_claims", "questionable_claims"):
+            cl = pack.get(key)
+            if isinstance(cl, list):
+                for c in cl:
+                    if isinstance(c, dict):
+                        cid = c.get("claim_id")
+                        if isinstance(cid, str) and cid.strip():
+                            own_ids.add(cid)
+
+        for id_key in ("load_bearing_claim_ids", "weak_link_claim_ids"):
+            raw_ids = ai.get(id_key)
+            if isinstance(raw_ids, list):
+                cleaned = [cid for cid in raw_ids if cid in own_ids]
+                dropped = len(raw_ids) - len(cleaned)
+                if dropped > 0:
+                    ai[id_key] = cleaned
+                    warnings = pack.setdefault("_policy_warnings", [])
+                    warnings.append({
+                        "code": "foreign_claim_id_in_argument_integrity",
+                        "field": f"argument_integrity.{id_key}",
+                        "dropped_count": dropped,
+                        "kept_count": len(cleaned),
+                        "message": (
+                            f"Dropped {dropped} claim ID(s) from {id_key} "
+                            f"not found in this reviewer's own claims."
+                        ),
+                    })
+
 
 # Backwards-compatible alias (internal callers may still use the old name)
 _normalize_reviewer_pack = normalize_reviewer_pack

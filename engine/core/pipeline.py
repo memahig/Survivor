@@ -127,13 +127,28 @@ def _build_reviewers_from_config(config: Dict[str, Any]) -> List[Any]:
     return reviewers
 
 
+def _write_status(outdir: str, stage: str, detail: str = "") -> None:
+    """Write pipeline_status.json for Streamlit to read during execution."""
+    import time
+    path = os.path.join(outdir, "pipeline_status.json")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"stage": stage, "detail": detail, "t": time.time()}, f)
+    except Exception:
+        pass
+
+
 def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> None:
     os.makedirs(outdir, exist_ok=True)
 
+    _write_status(outdir, "init", "loading config")
     config = load_config()
 
+    _write_status(outdir, "ingest", "fetching article")
     article = ingest_input(url=url, textfile=textfile)
     normalized = normalize_text(article["text"])
+
+    _write_status(outdir, "evidence_bank", "building evidence bank")
     evidence_bank = build_evidence_bank(normalized, config)
 
     available_eids = [
@@ -142,6 +157,8 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     ]
 
     reviewers = _build_reviewers_from_config(config)
+    reviewer_names = [r.name for r in reviewers]
+    _write_status(outdir, "reviewers_built", f"reviewers: {reviewer_names}")
 
     # ---------------------------
     # Phase 1, Pass 1: Skeletal Triage
@@ -149,6 +166,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     triage_outputs: Dict[str, Any] = {}
 
     for reviewer in reviewers:
+        _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} started")
         inp = ReviewerInputs(
             article_id=article["id"],
             source_url=article.get("source_url"),
@@ -158,6 +176,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             config=config,
         )
         raw_triage = reviewer.run_triage(inp)
+        _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} compiling")
         try:
             compiled = compile_reviewer_pack(
                 reviewer_id=reviewer.name,
@@ -173,10 +192,12 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 f"after {e.attempt} attempts"
             ) from e
         triage_outputs[reviewer.name] = compiled
+        _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} done")
 
     # ---------------------------
     # Build cross-reviewer argument spine
     # ---------------------------
+    _write_status(outdir, "spine", "building argument spine")
     spine = build_argument_spine(triage_outputs)
     print(
         f"[spine] pillar_claims={len(spine.get('pillar_claims', []))}, "
@@ -200,6 +221,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     phase1_outputs: Dict[str, Any] = {}
 
     for reviewer in reviewers:
+        _write_status(outdir, "phase1_enrichment", f"reviewer={reviewer.name} started")
         inp = ReviewerInputs(
             article_id=article["id"],
             source_url=article.get("source_url"),
@@ -217,6 +239,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 merged[k] = v
 
         phase1_outputs[reviewer.name] = merged
+        _write_status(outdir, "phase1_enrichment", f"reviewer={reviewer.name} done")
 
     # ---------------------------
     # Cross-review payload
@@ -232,6 +255,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     phase2_outputs: Dict[str, Any] = {}
 
     for reviewer in reviewers:
+        _write_status(outdir, "phase2", f"reviewer={reviewer.name} started")
         inp = ReviewerInputs(
             article_id=article["id"],
             source_url=article.get("source_url"),
@@ -241,6 +265,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             config=config,
         )
         raw_pack = reviewer.run_phase2(inp, cross_payload)
+        _write_status(outdir, "phase2", f"reviewer={reviewer.name} compiling")
         try:
             compiled = compile_reviewer_pack(
                 reviewer_id=reviewer.name,
@@ -256,6 +281,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 f"after {e.attempt} attempts"
             ) from e
         phase2_outputs[reviewer.name] = compiled
+        _write_status(outdir, "phase2", f"reviewer={reviewer.name} done")
 
     # Optional debug artifact (single write, after loop)
     with open(os.path.join(outdir, "phase2_outputs.json"), "w") as f:
@@ -264,12 +290,14 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     # ---------------------------
     # GSAE Tier C (post-extraction, pre-adjudication)
     # ---------------------------
+    _write_status(outdir, "gsae", "running GSAE quarantine")
     gsae_block = run_gsae_tier_c(phase2_outputs, config)
     phase2_sanitized = apply_gsae_quarantine(phase2_outputs, gsae_block, config)
 
     # ---------------------------
     # Adjudication (uses sanitized phase2)
     # ---------------------------
+    _write_status(outdir, "adjudication", "running adjudication")
     adjudicated = adjudicate(phase2_sanitized, config)
 
     run_state = {
@@ -283,6 +311,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     if gsae_block is not None:
         run_state["gsae"] = gsae_block
 
+    _write_status(outdir, "post_adjudication", "divergence radar + verification")
     run_state["divergence_radar"] = compute_divergence_radar(run_state)
     run_state["verification"] = run_verification(run_state, config)
     validate_run(run_state, config)
@@ -290,6 +319,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     # ---------------------------
     # Outputs
     # ---------------------------
+    _write_status(outdir, "writing_outputs", "writing run.json + reports")
     with open(os.path.join(outdir, config["outputs"]["run_json"]), "w") as f:
         json.dump(run_state, f, indent=2)
 
@@ -301,3 +331,5 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
 
     with open(os.path.join(outdir, config["outputs"]["debug_md"]), "w") as f:
         f.write(render_debug(run_state, config))
+
+    _write_status(outdir, "complete", "pipeline finished")

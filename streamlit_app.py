@@ -175,7 +175,21 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                     outdir=tmpdir,
                 )
             except Exception as e:
-                st.error(f"Pipeline error: {e}")
+                # Show last pipeline stage reached
+                _ps_path = os.path.join(tmpdir, "pipeline_status.json")
+                if os.path.exists(_ps_path):
+                    try:
+                        with open(_ps_path, "r") as _psf:
+                            _ps = json.load(_psf)
+                        st.error(
+                            f"Pipeline error at stage **{_ps.get('stage')}** "
+                            f"({_ps.get('detail')}): {e}"
+                        )
+                    except Exception:
+                        st.error(f"Pipeline error: {e}")
+                else:
+                    st.error(f"Pipeline error: {e}")
+
                 compile_err_path = os.path.join(tmpdir, "compile_error.json")
                 if os.path.exists(compile_err_path):
                     try:
@@ -191,7 +205,18 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                         st.warning(f"Could not read compile_error.json: {_read_err}")
                 return
 
-            status.info("Pipeline finished. Reading outputs...")
+            # Read final pipeline status
+            _ps_path = os.path.join(tmpdir, "pipeline_status.json")
+            _last_stage = "unknown"
+            if os.path.exists(_ps_path):
+                try:
+                    with open(_ps_path, "r") as _psf:
+                        _ps = json.load(_psf)
+                    _last_stage = f"{_ps.get('stage')}: {_ps.get('detail')}"
+                except Exception:
+                    pass
+
+            status.info(f"Pipeline finished ({_last_stage}). Reading outputs...")
 
             report_path = os.path.join(tmpdir, "report.md")
             run_json_path = os.path.join(tmpdir, "run.json")
@@ -199,9 +224,9 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
             detail.code(
                 json.dumps(
                     {
+                        "last_pipeline_stage": _last_stage,
                         "report_exists": os.path.exists(report_path),
                         "run_json_exists": os.path.exists(run_json_path),
-                        "tmpdir": tmpdir,
                     },
                     indent=2,
                 ),

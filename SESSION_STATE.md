@@ -1,89 +1,98 @@
-# SESSION_STATE — SURVIVOR (Post GSAE Phase 2)
-DATE: 2026-03-01
-PHASE: GSAE Phase 2 Complete / Integration Wiring Pending
-STATUS: CLEAN STOPPING POINT
+# SESSION STATE — Survivor
+# DATE: 2026-03-01
+# STATUS: Stable Architecture / External API Quota Blocker
 
-------------------------------------------------------------
-PRIMARY OUTCOME
-------------------------------------------------------------
+---
 
-GSAE Tier C implementation complete (Tasks 1-8).
-All code locked, tested, committed. 249 tests passing.
+## PRIMARY ACCOMPLISHMENTS
 
-Commit chain:
-- 7679032 Tasks 1-3 (skeleton + schemas + constants)
-- 70a2f71 Task 4 (fail-closed validators)
-- 5a4f566 Task 5 (config.json gsae_settings)
-- d04c50d Tasks 6-7 (test suite — 53 tests)
-- 1f4c56a Task 8 (compute_symmetry implementation + 15 behavioral tests)
+### 1) GSAE Drift Firewall — COMPLETE
+- classification_bucket normalization
+- severity normalization (minimal/moderate/elevated/high/critical)
+- confidence_band normalization (sb_low/sb_mid/sb_high/sb_max)
+- centrality clamping [1–3]
+- claim type normalization + unknown fallback to factual
+- Article classification synonym mapping
+- All enum drift absorbed pre-validator; validator remains fail-closed
 
-------------------------------------------------------------
-COMPLETED IMPLEMENTATION TASKS
-------------------------------------------------------------
+### 2) Divergence Radar — IMPLEMENTED
+**File:** `engine/core/divergence_radar.py`
 
-1. engine/eo/genre_alignment.py v0.2 — compute_symmetry()
-2. GSAESymmetryPacket / GSAESettings / GSAESymmetryArtifact in schemas.py
-3. GSAE constants + required-key sets in schema_constants.py
-4. Fail-closed GSAE validators in validators.py
-5. gsae_settings block in config.json
-6. tests/test_genre_alignment.py — 66 tests (validators + config + behavior)
-7. Full suite: 249 passing, zero failures
-8. compute_symmetry() — field distances, weighted delta, zone classification
+Three detectors:
+- A) Whole-article conflict (classification divergence + high-confidence bump)
+- B) Central claim instability (unsupported/undetermined rates among centrality >= 2)
+- C) GSAE quarantine bump
 
-------------------------------------------------------------
-TIER C INVARIANTS (LOCKED)
-------------------------------------------------------------
+Wired into pipeline.py post-adjudication. Rendered in blunt_biaslens.py (MD + JSON).
+Pure function, no mutation. Test suite green (280/280).
 
-Symmetry model:
-- Post-extraction only
-- Deterministic swap transform
+### 3) Verification Layer Bug — FIXED
+- CLAIM_KINDS mismatch corrected: {"world_fact", "document_content"}
+- config.json already correct
+
+### 4) Streamlit UI
+- Spinner: "Generating Blunt Report…"
+- Dual-source auth (st.secrets + .env)
+- Secrets bridge for API keys
+- Sidebar JSON toggles
+
+---
+
+## CURRENT BLOCKER
+
+**Gemini 429 RESOURCE_EXHAUSTED**
+- Free-tier limit: 20 requests/day
+- Diagnosis: API key tied to Free-tier AI Studio project
+- Infrastructure-level, not architectural
+
+---
+
+## TOMORROW PRIORITY ORDER
+
+1. Confirm AI Studio project billing tier
+2. Regenerate API key from billed project
+3. Update Streamlit Secrets
+4. Add exponential backoff + retry logic in Gemini adapter
+5. Optional: temporarily disable Gemini to confirm full pipeline runs clean
+
+---
+
+## ARCHITECTURAL STATUS
+
+- Enum discipline: hardened (6 normalizer layers)
+- Fail-closed validation: preserved
+- Verification router: aligned
+- Divergence Radar: operational
+- Tests: 280/280 passing
+- Pipeline: structurally production-grade
+- External calls: blocked by Gemini quota
+
+---
+
+## RECENT COMMITS (main)
+
+- `6330429` — Fix CLAIM_KINDS to match ClaimKind type
+- `339398f` — Add Divergence Radar
+- `0b05522` — GSAE severity + confidence band normalization
+- `a66a149` — GSAE classification_bucket normalization
+- `66c24f5` — Expanded claim type normalizer + unknown fallback
+- `b60b310` — Initial claim type normalization
+
+---
+
+## TIER C INVARIANTS (LOCKED)
+
+- Post-extraction only; deterministic swap transform
 - Field-scoped calibrated quarantine
-- No natural-language hypothetical swaps
-- No weight manipulation via soft flags
 - epsilon (noise floor) + tau (contamination threshold)
-- Scoped UNKNOWN on contaminated fields only
+- soft_symmetry_flag: audit-only, non-load-bearing
+- Symmetry overrides consensus at field level
+- Consensus never rescues contaminated fields
 
-soft_symmetry_flag:
-- Audit-only
-- Non-load-bearing
-- Cannot influence adjudication
+---
 
-Tier hierarchy:
-Tier A — Structural Validity (fail-closed)
-Tier C — Symmetry (calibrated, scoped quarantine)
-Tier B — Weighted Consensus (operates on clean fields only)
-Tier D — Deferred
+## KNOWN GAPS
 
-Symmetry overrides consensus at the field level.
-Consensus never rescues contaminated fields.
-
-------------------------------------------------------------
-NEXT: PHASE 3 — INTEGRATION WIRING
-------------------------------------------------------------
-
-1. Lock run_state["gsae"] shape (optional, validator-gated)
-2. Create packet generation module (engine/eo/gsae_packets.py)
-3. Wire call site in pipeline.py (post-Phase2, pre-adjudication)
-4. Quarantine application adapter (engine/eo/gsae_apply.py)
-5. Wire legacy→hardened migration (adjudicator→judge, render→generator)
-
-------------------------------------------------------------
-KNOWN NOTES
-------------------------------------------------------------
-
-- classification_bucket vocabulary remains distinct from ArticleClassification
-- intent_level vocabulary TBD (marked in schema docstrings)
-- judge.py must later support partially UNKNOWN field adjudication
-- epsilon and tau are calibration variables, not moral constants
-- pipeline.py v0.3 still uses legacy adjudicator + render modules
-
-------------------------------------------------------------
-PHILOSOPHY LOCK
-------------------------------------------------------------
-
-System optimizes for epistemic integrity, not stability.
-Constrained divergence allowed.
-Symmetry is a purity test, not a reliability signal.
-Drift flags are structural and audit-only.
-
-END SESSION_STATE
+- pipeline.py v0.3 still uses legacy adjudicator (not arena/judge)
+- Legacy render modules (not report/generator)
+- Layer 4 (Counterfactual Reversal) not started

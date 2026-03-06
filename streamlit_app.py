@@ -207,8 +207,14 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
     enriched = None
     render_err = None
     if run_state is not None:
-        from engine.render.render_bundle import render_all
-        blunt_md, audit_md, enriched, render_err = render_all(run_state, config={})
+        try:
+            from engine.render.render_bundle import render_all
+            blunt_md, audit_md, enriched, render_err = render_all(run_state, config={})
+        except Exception as e:
+            st.error(f"Renderer error: {e}")
+            render_err = str(e)
+    elif report_md is None:
+        st.error("Pipeline produced no output (run.json missing or empty).")
 
     st.success("Done.")
 

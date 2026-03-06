@@ -220,6 +220,214 @@ def _reviewer_conclusion_sentence(
     return f"**{name.title()}** sees this as **{cl}**."
 
 
+# ---------------------------------------------------------------------------
+# Structural Forensics Renderers (v0.5)
+# ---------------------------------------------------------------------------
+
+_CONCERN_ORDER = {"high": 0, "elevated": 1, "low": 2}
+
+
+def _render_argument_summary(forensics: Dict[str, Any]) -> str:
+    """
+    Render: what the article argues, how it gets there, what's missing.
+    """
+    arg = _sd(forensics.get("argument_summary"))
+    if not arg:
+        return ""
+
+    lines: List[str] = []
+    lines.append("## What this article is arguing\n\n")
+
+    by_reviewer = _sd(arg.get("by_reviewer"))
+    reviewers = sorted(by_reviewer.keys())
+
+    # Main conclusion — pick the longest across reviewers
+    conclusions = [_s(_sd(by_reviewer.get(r)).get("main_conclusion")) for r in reviewers]
+    conclusions = [c for c in conclusions if c]
+    if conclusions:
+        best = max(conclusions, key=len)
+        lines.append(f"This article argues: **{best}**\n\n")
+
+    # Supporting reasons — union across reviewers, dedupe
+    seen_reasons: Dict[str, str] = {}
+    for r in reviewers:
+        for reason in _sl(_sd(by_reviewer.get(r)).get("supporting_reasons")):
+            reason = _s(reason)
+            if not reason:
+                continue
+            norm = reason.strip().lower()
+            if norm not in seen_reasons or len(reason) > len(seen_reasons[norm]):
+                seen_reasons[norm] = reason
+
+    if seen_reasons:
+        lines.append("It gets there by:\n\n")
+        for reason in sorted(seen_reasons.values()):
+            lines.append(f"- {reason}\n")
+        lines.append("\n")
+
+    # Missing rival explanations
+    rivals = _sl(arg.get("merged_rival_explanations_missing"))
+    if rivals:
+        n_rev = len(_sl(arg.get("supporting_reviewers")))
+        lines.append(
+            f"What is missing but expected ({n_rev} reviewer(s) assessed):\n\n"
+        )
+        for rival in rivals:
+            lines.append(f"- {rival}\n")
+        lines.append("\n")
+
+    lines.append("---\n")
+    return "".join(lines)
+
+
+def _render_missing_expected_context(forensics: Dict[str, Any]) -> str:
+    """
+    Render article-level and framing-level omissions, sorted by concern level.
+    Top 5 shown, rest collapsed.
+    """
+    article_oms = _sl(forensics.get("article_omissions"))
+    framing_oms = _sl(forensics.get("framing_omissions"))
+
+    all_items = []
+    for om in article_oms:
+        om = _sd(om)
+        all_items.append(om)
+    for om in framing_oms:
+        om = _sd(om)
+        all_items.append(om)
+
+    if not all_items:
+        return ""
+
+    # Sort: concern level first, then number of supporting reviewers desc
+    all_items.sort(key=lambda x: (
+        _CONCERN_ORDER.get(x.get("concern_level", "low"), 9),
+        -len(_sl(x.get("supporting_reviewers"))),
+    ))
+
+    lines: List[str] = []
+    lines.append("## Missing expected context\n\n")
+    lines.append(
+        "These are areas where multiple reviewers independently noted the absence "
+        "of expected context (not intent, not motive — structural absence only).\n\n"
+    )
+
+    show = all_items[:5]
+    rest = len(all_items) - len(show)
+
+    for item in show:
+        kind = item.get("kind", "")
+        text = _s(item.get("merged_text"))
+        reason = _s(item.get("reason_expected"))
+        reviewers = _sl(item.get("supporting_reviewers"))
+        concern = item.get("concern_level", "low")
+        n_rev = len(reviewers)
+
+        # Plain-language prefix
+        if kind == "framing_omission":
+            frame_used = _s(item.get("frame_used_by_article"))
+            if frame_used:
+                prefix = f"The article uses a **{frame_used}** frame but omits"
+            else:
+                prefix = "The article omits"
+        else:
+            prefix = "Missing"
+
+        reviewer_note = (
+            f"{n_rev} reviewer(s) ({', '.join(r.title() for r in reviewers)})"
+            if reviewers else "reviewers"
+        )
+
+        line = f"- **{prefix}: {text}.**"
+        if reason:
+            line += f" {reason.capitalize()}."
+        line += f" [{reviewer_note}, concern: {concern}]"
+        lines.append(line + "\n")
+
+    if rest > 0:
+        lines.append(f"\n_{rest} additional omission(s) were identified._\n")
+
+    lines.append("\n---\n")
+    return "".join(lines)
+
+
+def _render_claim_level_weaknesses(
+    forensics: Dict[str, Any],
+    claim_index: Dict[str, Dict[str, Any]],
+) -> str:
+    """
+    Render top claim-level omissions where concern is elevated or high.
+    """
+    claim_oms = _sl(forensics.get("claim_omissions"))
+    # Filter to elevated/high only
+    strong = [
+        _sd(om) for om in claim_oms
+        if _sd(om).get("concern_level") in ("elevated", "high")
+    ]
+
+    if not strong:
+        return ""
+
+    # Sort by concern level, then by target_claim_id
+    strong.sort(key=lambda x: (
+        _CONCERN_ORDER.get(x.get("concern_level", "low"), 9),
+        x.get("target_claim_id", ""),
+    ))
+
+    lines: List[str] = []
+    lines.append("## Structural weaknesses in specific claims\n\n")
+
+    for om in strong[:5]:
+        tcid = _s(om.get("target_claim_id"))
+        text = _s(om.get("merged_text"))
+        reason = _s(om.get("reason_expected"))
+        reviewers = _sl(om.get("supporting_reviewers"))
+        concern = om.get("concern_level", "low")
+
+        # Look up claim text from claim_index
+        claim_rec = claim_index.get(tcid, {})
+        claim_text = _truncate(_s(claim_rec.get("text", "")), 80)
+
+        line = f"- **{tcid}**"
+        if claim_text:
+            line += f" (\"{claim_text}\")"
+        line += f": missing {text}."
+        if reason:
+            line += f" {reason.capitalize()}."
+        line += f" [{len(reviewers)} reviewer(s), concern: {concern}]"
+        lines.append(line + "\n")
+
+    lines.append("\n---\n")
+    return "".join(lines)
+
+
+def _render_discipline_banner(forensics: Dict[str, Any]) -> str:
+    """
+    Compact warning banner if object_discipline_check overall_status is fail.
+    """
+    odc = _sd(forensics.get("object_discipline_check"))
+    if not odc or odc.get("overall_status") != "fail":
+        return ""
+
+    by_reviewer = _sd(odc.get("by_reviewer"))
+    fail_reasons = []
+    for reviewer in sorted(by_reviewer.keys()):
+        check = _sd(by_reviewer.get(reviewer))
+        if check.get("status") == "fail":
+            reason = _s(check.get("reason"))
+            fail_reasons.append(f"{reviewer.title()}: {reason}")
+
+    lines: List[str] = []
+    lines.append(
+        "> **Object discipline warning:** One or more reviewers detected topic drift "
+        "away from the article under review.\n"
+    )
+    for fr in fail_reasons:
+        lines.append(f"> - {fr}\n")
+    lines.append("\n")
+    return "".join(lines)
+
+
 def _top_counterfactuals(
     cfs: List[Dict[str, Any]],
     claim_index: Dict[str, Dict[str, Any]],
@@ -531,6 +739,9 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
         },
     }
 
+    # Structural forensics (v0.5) — pass through merged data
+    forensics_json = _sd(adjudicated.get("structural_forensics"))
+
     return {
         "article": {
             "id": article.get("id"),
@@ -543,6 +754,7 @@ def render_blunt_biaslens_json(run_state: Dict[str, Any], config: Dict[str, Any]
             "evidence_eids": waj.get("evidence_eids", []),
         },
         "plain_language_synthesis": plain_language,
+        "structural_forensics": forensics_json,
         "commented_lines": commented,
         "symmetry": symmetry,
         "divergence_radar": divergence,
@@ -617,6 +829,15 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
         lines.append("\nIndividual reviewers: " + "; ".join(reviewer_bits) + ".\n")
 
     lines.append("\n---\n")
+
+    # ---- Structural forensics (v0.5) ----
+    forensics = _sd(adjudicated.get("structural_forensics"))
+
+    # Object discipline banner (only on fail)
+    lines.append(_render_discipline_banner(forensics))
+
+    # Argument summary: what article argues, how, what's missing
+    lines.append(_render_argument_summary(forensics))
 
     # ---- Claims / groups (compute early for synthesis + bottom line) ----
     arena = _sd(_sd(adjudicated.get("claim_track")).get("arena"))
@@ -708,6 +929,12 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
                 lines.append(f"> {quote}\n\n")
             lines.append("**Comment:** " + " ".join(comment_parts) + "\n")
             lines.append("\n---\n")
+
+    # ---- Missing expected context (article + framing omissions) ----
+    lines.append(_render_missing_expected_context(forensics))
+
+    # ---- Claim-level structural weaknesses ----
+    lines.append(_render_claim_level_weaknesses(forensics, claim_index))
 
     # ---- Symmetry ----
     lines.append("## Symmetry analysis\n")

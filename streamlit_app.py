@@ -150,6 +150,10 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
             st.error(f"Failed to import Survivor engine: {e}")
             return
 
+        report_md = None
+        run_json_str = None
+        run_state = None
+
         with tempfile.TemporaryDirectory(prefix="survivor_") as tmpdir:
             textfile_path = None
 
@@ -183,21 +187,12 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
 
             # Read back generated files
             report_path = os.path.join(tmpdir, "report.md")
-            debug_path = os.path.join(tmpdir, "debug.md")
             run_json_path = os.path.join(tmpdir, "run.json")
 
-            report_md = None
             if os.path.exists(report_path):
                 with open(report_path, "r", encoding="utf-8") as f:
                     report_md = f.read()
 
-            debug_md = None
-            if os.path.exists(debug_path):
-                with open(debug_path, "r", encoding="utf-8") as f:
-                    debug_md = f.read()
-
-            run_json_str = None
-            run_state = None
             if os.path.exists(run_json_path):
                 with open(run_json_path, "r", encoding="utf-8") as f:
                     run_json_str = f.read()

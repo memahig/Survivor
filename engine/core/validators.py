@@ -597,6 +597,129 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
 
     _validate_cross_claim_votes(pack, config)
 
+    # Structural forensics fields (optional — validated strictly if present)
+    if "claim_omissions" in pack:
+        _validate_claim_omissions(pack, kept_ids)
+    if "article_omissions" in pack:
+        _validate_article_omissions(pack, kept_ids)
+    if "framing_omissions" in pack:
+        _validate_framing_omissions(pack)
+    if "argument_summary" in pack:
+        _validate_argument_summary(pack)
+    if "object_discipline_check" in pack:
+        _validate_object_discipline_check(pack)
+
+
+# ---------------------------------------------------------------------------
+# Structural forensics validators (v0.5)
+# ---------------------------------------------------------------------------
+
+
+def _validate_claim_omissions(pack: Dict[str, Any], kept_ids: Set[str]) -> None:
+    items = pack["claim_omissions"]
+    _require(isinstance(items, list), "claim_omissions must be list")
+    for i, item in enumerate(items):
+        _require(isinstance(item, dict), f"claim_omissions[{i}] must be dict")
+        tid = item.get("target_claim_id")
+        _require(
+            isinstance(tid, str) and tid.strip(),
+            f"claim_omissions[{i}].target_claim_id must be non-empty str",
+        )
+        mf = item.get("missing_frame")
+        _require(
+            isinstance(mf, str) and mf.strip(),
+            f"claim_omissions[{i}].missing_frame must be non-empty str",
+        )
+        conf = item.get("confidence")
+        _require(
+            conf in CONFIDENCE_VALUES,
+            f"claim_omissions[{i}].confidence must be one of {sorted(CONFIDENCE_VALUES)}",
+        )
+
+
+def _validate_article_omissions(pack: Dict[str, Any], kept_ids: Set[str]) -> None:
+    items = pack["article_omissions"]
+    _require(isinstance(items, list), "article_omissions must be list")
+    for i, item in enumerate(items):
+        _require(isinstance(item, dict), f"article_omissions[{i}] must be dict")
+        mf = item.get("missing_frame")
+        _require(
+            isinstance(mf, str) and mf.strip(),
+            f"article_omissions[{i}].missing_frame must be non-empty str",
+        )
+        aids = item.get("affected_claim_ids")
+        _require(
+            isinstance(aids, list),
+            f"article_omissions[{i}].affected_claim_ids must be list",
+        )
+        conf = item.get("confidence")
+        _require(
+            conf in CONFIDENCE_VALUES,
+            f"article_omissions[{i}].confidence must be one of {sorted(CONFIDENCE_VALUES)}",
+        )
+
+
+def _validate_framing_omissions(pack: Dict[str, Any]) -> None:
+    items = pack["framing_omissions"]
+    _require(isinstance(items, list), "framing_omissions must be list")
+    for i, item in enumerate(items):
+        _require(isinstance(item, dict), f"framing_omissions[{i}] must be dict")
+        fua = item.get("frame_used_by_article")
+        _require(
+            isinstance(fua, str) and fua.strip(),
+            f"framing_omissions[{i}].frame_used_by_article must be non-empty str",
+        )
+        mf = item.get("missing_frame")
+        _require(
+            isinstance(mf, str) and mf.strip(),
+            f"framing_omissions[{i}].missing_frame must be non-empty str",
+        )
+        af = item.get("alternative_frames")
+        _require(
+            isinstance(af, list) and all(isinstance(f, str) for f in af),
+            f"framing_omissions[{i}].alternative_frames must be list[str]",
+        )
+        conf = item.get("confidence")
+        _require(
+            conf in CONFIDENCE_VALUES,
+            f"framing_omissions[{i}].confidence must be one of {sorted(CONFIDENCE_VALUES)}",
+        )
+
+
+def _validate_argument_summary(pack: Dict[str, Any]) -> None:
+    summary = pack["argument_summary"]
+    _require(isinstance(summary, dict), "argument_summary must be dict")
+    mc = summary.get("main_conclusion")
+    _require(
+        isinstance(mc, str) and mc.strip(),
+        "argument_summary.main_conclusion must be non-empty str",
+    )
+    sr = summary.get("supporting_reasons")
+    _require(
+        isinstance(sr, list) and all(isinstance(s, str) for s in sr),
+        "argument_summary.supporting_reasons must be list[str]",
+    )
+    kr = summary.get("key_rival_explanations_missing")
+    _require(
+        isinstance(kr, list) and all(isinstance(s, str) for s in kr),
+        "argument_summary.key_rival_explanations_missing must be list[str]",
+    )
+
+
+def _validate_object_discipline_check(pack: Dict[str, Any]) -> None:
+    odc = pack["object_discipline_check"]
+    _require(isinstance(odc, dict), "object_discipline_check must be dict")
+    status = odc.get("status")
+    _require(
+        status in ("pass", "fail"),
+        "object_discipline_check.status must be 'pass' or 'fail'",
+    )
+    reason = odc.get("reason")
+    _require(
+        isinstance(reason, str) and reason.strip(),
+        "object_discipline_check.reason must be non-empty str",
+    )
+
 
 # ---------------------------------------------------------------------------
 # EID collection (iterative, cap-guarded — v0.2.1)

@@ -65,55 +65,73 @@ class OpenAIReviewer:
         max_omit = int(inp.config.get("max_omission_candidates", 5))
         max_cf = int(inp.config.get("max_counterfactuals", 5))
         return f"""
-You are an epistemic integrity reviewer. Return ONLY valid JSON — no text before or after.
+You are an epistemic integrity reviewer. Return ONLY valid JSON — no markdown, no text before or after.
+Never cut off JSON. Always return a complete, closed JSON object.
 
-If output size becomes large, reduce list lengths below the maximums rather than exceeding token limits.
-Never cut off JSON. Always return a complete closed JSON object.
+HARD CONSTRAINTS — violations cause rejection:
+- type MUST be one of: factual, causal, normative, predictive. Nothing else. Default: factual.
+- centrality MUST be an integer: 1, 2, or 3. Not a word. Default: 2.
+- confidence MUST be: low, medium, or high.
+- classification MUST be: reporting, analysis, advocacy, mixed, or uncertain.
+- evidence_eids MUST only reference eids from the EvidenceBank below.
+- pillar_claims: max {max_pillar} items. IDs: PC1, PC2, ...
+- questionable_claims: max {max_quest} items. IDs: QC1, QC2, ...
+- omission_candidates: max {max_omit} items.
+- counterfactual_requirements: max {max_cf} items.
+- cross_claim_votes MUST be [] in Phase 1.
+- claim text: under 120 characters. No full sentences — use fragments.
+- missing_frame: under 80 characters.
+- reason_expected: under 20 words.
+- description: under 25 words.
+- why_it_changes_confidence: under 20 words.
+- If output grows large, CUT LIST LENGTHS rather than risk truncation.
+- Prefer fewer, higher-quality items. Use [] for any list with no strong items.
 
-Output a single JSON object with these keys exactly:
-- reviewer (string)
-- whole_article_judgment (object: classification, confidence, evidence_eids)
-- main_conclusion (object: text, evidence_eids, confidence)
-- pillar_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — load-bearing claims (max {max_pillar})
-- questionable_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — epistemically risky claims (max {max_quest})
-- background_claims_summary (object: total_claims_estimate:int, not_triaged_count:int)
-- scope_markers (list of objects: text, marker_type, evidence_eids)
-- causal_links (list of objects: from_claim_id, to_claim_id, evidence_eids)
-- article_patterns (list of objects: pattern_type, evidence_eids)
-- omission_candidates (list of objects: missing_frame, reason_expected, confidence) — max {max_omit}
-- counterfactual_requirements (list of objects: target_claim_id, counterfactual_type, measurable_type, description, why_it_changes_confidence, confidence) — max {max_cf}
-- evidence_density (object: claims_count, claims_with_internal_support, external_sources_count)
-- claim_tickets (list)
-- article_tickets (list)
-- cross_claim_votes (list)  # MUST be [] in Phase 1
+EXAMPLE of correct claim format:
+{{"claim_id": "PC1", "text": "Claim under 120 chars", "type": "factual", "evidence_eids": ["E1"], "centrality": 2}}
 
-STRICT ENUM RULES — do not invent new labels:
-- type must be exactly one of: factual, causal, normative, predictive. If uncertain, use "factual".
-- centrality must be exactly one of: 1, 2, 3. Not a word. If uncertain, use 2.
-- confidence must be exactly one of: low, medium, high.
-- classification must be exactly one of: reporting, analysis, advocacy, mixed, uncertain.
-- evidence_eids must only reference eids that exist in the provided EvidenceBank.
-- If classification is "uncertain", evidence_eids may be [].
+OBJECT LOCK — analyze the provided article only:
+- Do not discuss the broader topic, provide background education, or offer moral commentary.
+- Answer only: "how is this article constructing its argument?"
+- If a finding is not grounded in the article text or EvidenceBank, do not include it.
+- Never infer author intent or motive. Report structure, not psychology.
 
-ID RULES:
-- pillar claim_ids: PC1, PC2, ...
-- questionable claim_ids: QC1, QC2, ...
+OMISSION DETECTION — test at 3 levels:
+1. CLAIM-LEVEL: For each pillar claim, what rival context is normally expected but absent?
+2. ARTICLE-LEVEL: For the main conclusion, what major rival explanations are missing?
+3. FRAMING-LEVEL: How does the article define the problem? What alternative framings are excluded?
 
-TRIAGE RULES:
-- A claim may appear in both lists only if it is both load-bearing and epistemically risky.
-- Otherwise place it in only one list.
-- Use [] for any optional list with no strong items.
-- Do not fill lists just because a maximum exists.
+STRUCTURAL FINDINGS to detect (use in article_patterns):
+- scope_inflation (selected examples treated as universal)
+- unsupported_causal_or_origin_story (causal claims asserted without evidence)
+- omission_dependent_reasoning (argument works because alternatives absent)
+- framing_escalation (gradual shift from analysis to survival/threat framing)
+- load_bearing_weakness (biggest conclusions rest on weakest claims)
 
-FIELD BUDGETS:
-- claim text: under 120 characters
-- missing_frame: under 80 characters
-- reason_expected: under 20 words
-- description: under 25 words
-- why_it_changes_confidence: under 20 words
+Output a single JSON object with ALL of these keys:
+reviewer, whole_article_judgment, main_conclusion, pillar_claims, questionable_claims,
+background_claims_summary, scope_markers, causal_links, article_patterns,
+omission_candidates, counterfactual_requirements, evidence_density,
+claim_tickets, article_tickets, cross_claim_votes,
+claim_omissions, article_omissions, framing_omissions, argument_summary, object_discipline_check
 
-In Phase 1, keep omission_candidates and counterfactual_requirements especially sparse.
-Prefer fewer, higher-quality items over exhaustive lists.
+Key shapes:
+- whole_article_judgment: {{classification, confidence, evidence_eids}}
+- main_conclusion: {{text, evidence_eids, confidence}}
+- background_claims_summary: {{total_claims_estimate: int, not_triaged_count: int}}
+- evidence_density: {{claims_count, claims_with_internal_support, external_sources_count}}
+- scope_markers: [{{text, marker_type, evidence_eids}}]
+- causal_links: [{{from_claim_id, to_claim_id, evidence_eids}}]
+- article_patterns: [{{pattern_type, evidence_eids}}]
+- omission_candidates: [{{missing_frame, reason_expected, confidence}}]
+- counterfactual_requirements: [{{target_claim_id, counterfactual_type, measurable_type, description, why_it_changes_confidence, confidence}}]
+- claim_omissions: [{{target_claim_id, missing_frame, reason_expected, confidence}}]
+- article_omissions: [{{missing_frame, affected_claim_ids, reason_expected, confidence}}]
+- framing_omissions: [{{frame_used_by_article, missing_frame, alternative_frames: [str], reason_expected, confidence}}]
+- argument_summary: {{main_conclusion: str, supporting_reasons: [str], key_rival_explanations_missing: [str]}}
+- object_discipline_check: {{status: "pass"|"fail", reason: str}}
+
+Keep all lists sparse — fewer high-quality items over exhaustive lists.
 Do not explain reasoning — just state the claim or finding.
 
 Reviewer name: {self.name}
@@ -298,7 +316,6 @@ ARTICLE (normalized text):
         # Only allow Phase2 to override/extend specific keys (fail-closed-ish)
         allowed_overrides = {
             "cross_claim_votes",
-            # optionally allow Phase2 to refine these later, but not required:
             "article_tickets",
             "claim_tickets",
             "counterfactual_requirements",
@@ -312,6 +329,11 @@ ARTICLE (normalized text):
             "main_conclusion",
             "whole_article_judgment",
             "evidence_density",
+            "claim_omissions",
+            "article_omissions",
+            "framing_omissions",
+            "argument_summary",
+            "object_discipline_check",
         }
 
         for k, v in phase2_out.items():

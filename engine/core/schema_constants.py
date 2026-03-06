@@ -41,6 +41,12 @@ REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "gsae_subject",
     "expression",  # Permissive free-text/alternate-label block (v1.0 translator)
     "_policy_warnings",
+    # Structural forensics (v0.5 — optional until stabilized)
+    "claim_omissions",
+    "article_omissions",
+    "framing_omissions",
+    "argument_summary",
+    "object_discipline_check",
 })
 
 # ---------------------------------------------------------------------------

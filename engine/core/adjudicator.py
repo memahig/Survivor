@@ -176,8 +176,15 @@ def _adjudicate_claim_groups(
     claim_index = _index_claims_by_id(claims_by_model)
 
     edges = _collect_near_duplicate_edges(cross_votes_by_model)
-    parent = build_equivalence_groups(edges) if edges else {cid: cid for cid in claim_index.keys()}
-    groups = group_members(parent) if edges else {cid: [cid] for cid in sorted(claim_index.keys())}
+    if edges:
+        parent = build_equivalence_groups(edges)
+        # Ensure every claim_id has a parent entry — unlinked claims become singletons
+        for cid in claim_index:
+            if cid not in parent:
+                parent[cid] = cid
+        groups = group_members(parent)
+    else:
+        groups = {cid: [cid] for cid in sorted(claim_index.keys())}
 
     adjudicated_claims: List[Dict[str, Any]] = []
 

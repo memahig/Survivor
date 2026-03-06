@@ -624,6 +624,8 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
         _validate_argument_summary(pack)
     if "object_discipline_check" in pack:
         _validate_object_discipline_check(pack)
+    if "rival_narratives" in pack:
+        _validate_rival_narratives(pack)
 
 
 # ---------------------------------------------------------------------------
@@ -720,6 +722,51 @@ def _validate_argument_summary(pack: Dict[str, Any]) -> None:
         isinstance(kr, list) and all(isinstance(s, str) for s in kr),
         "argument_summary.key_rival_explanations_missing must be list[str]",
     )
+
+
+_FRAGILITY_VALUES: frozenset[str] = frozenset({"low", "elevated", "high"})
+
+
+def _validate_rival_narratives(pack: Dict[str, Any]) -> None:
+    items = pack["rival_narratives"]
+    _require(isinstance(items, list), "rival_narratives must be list")
+    for i, item in enumerate(items):
+        _require(isinstance(item, dict), f"rival_narratives[{i}] must be dict")
+        rnid = item.get("rival_narrative_id")
+        _require(
+            isinstance(rnid, str) and rnid.strip(),
+            f"rival_narratives[{i}].rival_narrative_id must be non-empty str",
+        )
+        lens = item.get("lens")
+        _require(
+            isinstance(lens, str) and lens.strip(),
+            f"rival_narratives[{i}].lens must be non-empty str",
+        )
+        summary = item.get("summary")
+        _require(
+            isinstance(summary, str) and summary.strip(),
+            f"rival_narratives[{i}].summary must be non-empty str",
+        )
+        scfu = item.get("same_core_facts_used")
+        _require(
+            isinstance(scfu, list),
+            f"rival_narratives[{i}].same_core_facts_used must be list",
+        )
+        cwit = item.get("claims_weakened_if_true")
+        _require(
+            isinstance(cwit, list),
+            f"rival_narratives[{i}].claims_weakened_if_true must be list",
+        )
+        sf = item.get("structural_fragility")
+        _require(
+            sf in _FRAGILITY_VALUES,
+            f"rival_narratives[{i}].structural_fragility must be one of {sorted(_FRAGILITY_VALUES)}",
+        )
+        conf = item.get("confidence")
+        _require(
+            conf in CONFIDENCE_VALUES,
+            f"rival_narratives[{i}].confidence must be one of {sorted(CONFIDENCE_VALUES)}",
+        )
 
 
 def _validate_object_discipline_check(pack: Dict[str, Any]) -> None:

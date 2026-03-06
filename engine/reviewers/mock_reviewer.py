@@ -22,6 +22,18 @@ class MockReviewer:
     def __init__(self, name: str) -> None:
         self.name = name  # "openai" | "gemini" | "claude"
 
+    def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+        """Stub for compile_reviewer_pack repair interface. Never actually called."""
+        raise NotImplementedError("MockReviewer._call_json should never be called")
+
+    # Keys that enrichment may contribute to the final pack.
+    _ENRICHMENT_KEYS = frozenset({
+        "scope_markers", "causal_links", "article_patterns",
+        "omission_candidates", "counterfactual_requirements",
+        "claim_omissions", "article_omissions", "framing_omissions",
+        "argument_summary", "object_discipline_check",
+    })
+
     def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
         claims = [
             {
@@ -98,6 +110,21 @@ class MockReviewer:
             "article_tickets": [],
         }
         return pack
+
+    def run_triage(self, inp: ReviewerInputs) -> Dict[str, Any]:
+        """Pass 1: skeletal triage — returns the full mock pack (already skeletal)."""
+        return self.run_phase1(inp)
+
+    def run_enrichment(self, inp: ReviewerInputs, spine: Dict[str, Any]) -> Dict[str, Any]:
+        """Pass 2: enrichment — mock returns empty forensics."""
+        return {
+            "scope_markers": [],
+            "causal_links": [],
+            "article_patterns": [],
+            "omission_candidates": [],
+            "counterfactual_requirements": [],
+            "rival_narratives": [],
+        }
 
     def run_phase2(self, inp: ReviewerInputs, cross_review_payload: Dict[str, Any]) -> Dict[str, Any]:
         phase1 = cross_review_payload["phase1_outputs"]

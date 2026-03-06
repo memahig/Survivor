@@ -47,6 +47,7 @@ REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "framing_omissions",
     "argument_summary",
     "object_discipline_check",
+    "rival_narratives",
 })
 
 # ---------------------------------------------------------------------------

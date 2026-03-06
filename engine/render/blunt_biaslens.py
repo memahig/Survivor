@@ -428,6 +428,84 @@ def _render_discipline_banner(forensics: Dict[str, Any]) -> str:
     return "".join(lines)
 
 
+def _render_rival_narratives(
+    forensics: Dict[str, Any],
+    claim_index: Dict[str, Dict[str, Any]],
+) -> str:
+    """Render merged rival narratives — the adversarial symmetry test."""
+    rivals = _sl(forensics.get("rival_narratives"))
+    if not rivals:
+        return ""
+
+    _FRAG_ORDER = {"high": 0, "elevated": 1, "low": 2}
+    _CONCERN_ORDER = {"high": 0, "elevated": 1, "low": 2}
+
+    ranked = sorted(
+        rivals,
+        key=lambda r: (
+            _FRAG_ORDER.get(_s(r.get("structural_fragility")), 9),
+            _CONCERN_ORDER.get(_s(r.get("concern_level")), 9),
+        ),
+    )
+
+    lines: List[str] = []
+    lines.append("### Rival narratives that fit the same facts\n\n")
+
+    for item in ranked[:5]:
+        lens = _s(item.get("lens"))
+        summary = _s(item.get("merged_summary"))
+        fragility = _s(item.get("structural_fragility"))
+        concern = _s(item.get("concern_level"))
+        reviewers = item.get("supporting_reviewers", [])
+        weakened = item.get("claims_weakened_if_true", [])
+
+        lines.append(f"- **{lens}** — {summary}")
+
+        detail_parts = []
+        if fragility:
+            detail_parts.append(f"fragility: {fragility}")
+        if concern:
+            detail_parts.append(f"concern: {concern}")
+        if reviewers:
+            detail_parts.append(f"flagged by: {', '.join(reviewers)}")
+        if detail_parts:
+            lines.append(f"  [{' | '.join(detail_parts)}]")
+
+        if weakened:
+            weak_texts = []
+            for cid in weakened[:3]:
+                c = claim_index.get(cid)
+                if c:
+                    weak_texts.append(f'"{_s(c.get("text"))}"')
+                else:
+                    weak_texts.append(cid)
+            lines.append(f"  Claims weakened: {', '.join(weak_texts)}")
+
+        lines.append("\n")
+
+    lines.append("\n---\n")
+    return "\n".join(lines)
+
+
+def _render_shared_blind_spot(forensics: Dict[str, Any]) -> str:
+    """Blockquote warning if shared blind spot check fails."""
+    sbs = forensics.get("shared_blind_spot_check")
+    if not isinstance(sbs, dict) or sbs.get("status") != "fail":
+        return ""
+
+    reason = _s(sbs.get("reason"))
+    lines: List[str] = []
+    lines.append(
+        "> **Shared blind spot warning:** " + reason + "\n"
+    )
+    lines.append(
+        "> All models may share training-corpus bias on this topic. "
+        "Treat convergent findings with additional skepticism.\n"
+    )
+    lines.append("\n")
+    return "".join(lines)
+
+
 def _top_counterfactuals(
     cfs: List[Dict[str, Any]],
     claim_index: Dict[str, Dict[str, Any]],
@@ -935,6 +1013,12 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
 
     # ---- Claim-level structural weaknesses ----
     lines.append(_render_claim_level_weaknesses(forensics, claim_index))
+
+    # ---- Rival narratives (adversarial symmetry test) ----
+    lines.append(_render_rival_narratives(forensics, claim_index))
+
+    # ---- Shared blind spot warning ----
+    lines.append(_render_shared_blind_spot(forensics))
 
     # ---- Symmetry ----
     lines.append("## Symmetry analysis\n")

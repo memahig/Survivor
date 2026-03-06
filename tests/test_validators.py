@@ -745,3 +745,42 @@ def test_background_summary_invalid_samples_raises():
     )
     with pytest.raises(RuntimeError, match="samples must be list"):
         validate_reviewer_pack(pack, _CFG)
+
+
+# ---------------------------------------------------------------------------
+# Rival narratives validation
+# ---------------------------------------------------------------------------
+
+
+def _make_rival_narrative(**overrides):
+    rn = {
+        "rival_narrative_id": "RN1",
+        "lens": "territorial / occupation",
+        "summary": "Violence explained through occupation and blockade",
+        "same_core_facts_used": ["E1"],
+        "claims_weakened_if_true": ["openai-CL-01"],
+        "structural_fragility": "elevated",
+        "confidence": "high",
+    }
+    rn.update(overrides)
+    return rn
+
+
+def test_rival_narrative_valid_passes():
+    pack = _make_pack()
+    pack["rival_narratives"] = [_make_rival_narrative()]
+    validate_reviewer_pack(pack, _CFG)
+
+
+def test_rival_narrative_missing_lens_raises():
+    pack = _make_pack()
+    pack["rival_narratives"] = [_make_rival_narrative(lens="")]
+    with pytest.raises(RuntimeError, match="lens must be non-empty str"):
+        validate_reviewer_pack(pack, _CFG)
+
+
+def test_rival_narrative_invalid_fragility_raises():
+    pack = _make_pack()
+    pack["rival_narratives"] = [_make_rival_narrative(structural_fragility="extreme")]
+    with pytest.raises(RuntimeError, match="structural_fragility must be one of"):
+        validate_reviewer_pack(pack, _CFG)

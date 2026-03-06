@@ -300,3 +300,100 @@ class TestConcernLevel:
         ao = result["article_omissions"]
         assert len(ao) == 1
         assert ao[0]["reason_expected"] == "a much longer reason expected text"
+
+
+# ---------------------------------------------------------------------------
+# Rival narratives
+# ---------------------------------------------------------------------------
+
+
+class TestRivalNarrativesMerge:
+    def test_same_lens_merges(self):
+        packs = {
+            "openai": _pack(rival_narratives=[{
+                "rival_narrative_id": "RN1",
+                "lens": "territorial / occupation",
+                "summary": "Violence from occupation",
+                "same_core_facts_used": ["E1"],
+                "claims_weakened_if_true": ["PC1"],
+                "structural_fragility": "elevated",
+                "confidence": "high",
+            }]),
+            "claude": _pack(rival_narratives=[{
+                "rival_narrative_id": "RN1",
+                "lens": "Territorial / Occupation",
+                "summary": "Violence explained through long-term occupation and blockade",
+                "same_core_facts_used": ["E1", "E3"],
+                "claims_weakened_if_true": ["PC1", "PC8"],
+                "structural_fragility": "high",
+                "confidence": "medium",
+            }]),
+        }
+        result = merge_structural_forensics(packs)
+        rn = result["rival_narratives"]
+        assert len(rn) == 1
+        assert rn[0]["kind"] == "rival_narrative"
+        assert sorted(rn[0]["supporting_reviewers"]) == ["claude", "openai"]
+        assert rn[0]["concern_level"] == "elevated"
+        # Longest summary wins
+        assert "long-term occupation" in rn[0]["merged_summary"]
+        # Highest fragility wins
+        assert rn[0]["structural_fragility"] == "high"
+        # Union of facts and weakened claims
+        assert "E3" in rn[0]["same_core_facts_used"]
+        assert "PC8" in rn[0]["claims_weakened_if_true"]
+
+    def test_different_lens_stays_separate(self):
+        packs = {
+            "openai": _pack(rival_narratives=[{
+                "rival_narrative_id": "RN1",
+                "lens": "territorial",
+                "summary": "Territorial explanation",
+                "same_core_facts_used": ["E1"],
+                "claims_weakened_if_true": ["PC1"],
+                "structural_fragility": "elevated",
+                "confidence": "high",
+            }]),
+            "claude": _pack(rival_narratives=[{
+                "rival_narrative_id": "RN1",
+                "lens": "economic disparity",
+                "summary": "Economic explanation",
+                "same_core_facts_used": ["E2"],
+                "claims_weakened_if_true": ["PC2"],
+                "structural_fragility": "low",
+                "confidence": "medium",
+            }]),
+        }
+        result = merge_structural_forensics(packs)
+        rn = result["rival_narratives"]
+        assert len(rn) == 2
+
+    def test_empty_all_reviewers_triggers_blind_spot_fail(self):
+        packs = {
+            "openai": _pack(rival_narratives=[]),
+            "claude": _pack(rival_narratives=[]),
+            "gemini": _pack(rival_narratives=[]),
+        }
+        result = merge_structural_forensics(packs)
+        assert result["rival_narratives"] == []
+        sbs = result["shared_blind_spot_check"]
+        assert sbs["status"] == "fail"
+        assert "corpus-locked" in sbs["reason"].lower()
+
+    def test_one_reviewer_has_rival_triggers_pass(self):
+        packs = {
+            "openai": _pack(rival_narratives=[]),
+            "claude": _pack(rival_narratives=[{
+                "rival_narrative_id": "RN1",
+                "lens": "territorial",
+                "summary": "Territory-based explanation",
+                "same_core_facts_used": ["E1"],
+                "claims_weakened_if_true": ["PC1"],
+                "structural_fragility": "elevated",
+                "confidence": "medium",
+            }]),
+        }
+        result = merge_structural_forensics(packs)
+        sbs = result["shared_blind_spot_check"]
+        assert sbs["status"] == "pass"
+        assert len(result["rival_narratives"]) == 1

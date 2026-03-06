@@ -238,6 +238,116 @@ def _merge_object_discipline(
 
 
 # ---------------------------------------------------------------------------
+# Rival narratives — merge by normalized lens (conservative)
+# ---------------------------------------------------------------------------
+
+def _merge_rival_narratives(
+    packs: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Group rival_narratives across reviewers by normalized lens text.
+    Conservative: only merge when normalized lens matches exactly.
+    """
+    # bucket: norm(lens) -> list of (reviewer, entry)
+    buckets: Dict[str, List[tuple]] = {}
+
+    for reviewer, pack in packs.items():
+        for item in pack.get("rival_narratives", []):
+            if not isinstance(item, dict):
+                continue
+            lens = item.get("lens", "")
+            key = _norm(lens)
+            if key:
+                buckets.setdefault(key, []).append((reviewer, item))
+
+    results: List[Dict[str, Any]] = []
+    for _key in sorted(buckets):
+        entries = buckets[_key]
+        reviewers = sorted(set(r for r, _ in entries))
+        conf_by = {r: e.get("confidence", "medium") for r, e in entries}
+        # Use the longest lens and summary as canonical
+        merged_lens = max((e.get("lens", "") for _, e in entries), key=len)
+        merged_summary = max((e.get("summary", "") for _, e in entries), key=len)
+
+        # Union of same_core_facts_used and claims_weakened_if_true
+        all_facts: set = set()
+        all_weakened: set = set()
+        for _, e in entries:
+            for f in e.get("same_core_facts_used", []):
+                if isinstance(f, str):
+                    all_facts.add(f)
+            for c in e.get("claims_weakened_if_true", []):
+                if isinstance(c, str):
+                    all_weakened.add(c)
+
+        # Use the highest structural_fragility across reviewers
+        frag_order = {"low": 0, "elevated": 1, "high": 2}
+        best_frag = max(
+            (e.get("structural_fragility", "low") for _, e in entries),
+            key=lambda x: frag_order.get(x, 0),
+        )
+
+        results.append({
+            "kind": "rival_narrative",
+            "lens": merged_lens,
+            "merged_summary": merged_summary,
+            "same_core_facts_used": sorted(all_facts),
+            "claims_weakened_if_true": sorted(all_weakened),
+            "structural_fragility": best_frag,
+            "supporting_reviewers": reviewers,
+            "confidence_by_reviewer": conf_by,
+            "concern_level": _concern_level(len(reviewers)),
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Shared blind spot check — corpus lock detection
+# ---------------------------------------------------------------------------
+
+def _shared_blind_spot_check(
+    packs: Dict[str, Dict[str, Any]],
+    merged_rivals: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Detect corpus-locked blind spots.
+    If ALL reviewers failed to construct any rival narrative, flag as fail.
+    """
+    reviewer_count = len(packs)
+    if reviewer_count == 0:
+        return {
+            "status": "pass",
+            "reason": "No reviewers present.",
+        }
+
+    # Check if ANY reviewer produced at least one rival narrative
+    any_rival = any(
+        len(pack.get("rival_narratives", [])) > 0
+        for pack in packs.values()
+    )
+
+    if not any_rival:
+        return {
+            "status": "fail",
+            "reason": (
+                "No reviewer constructed a rival narrative. "
+                "Possible corpus-locked blind spot."
+            ),
+        }
+
+    # Count distinct lenses across merged rivals
+    lens_count = len(merged_rivals)
+    return {
+        "status": "pass",
+        "reason": (
+            f"{lens_count} rival narrative(s) constructed across "
+            f"{reviewer_count} reviewers."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -251,6 +361,8 @@ def merge_structural_forensics(
       - claim_omissions: merged list
       - article_omissions: merged list
       - framing_omissions: merged list
+      - rival_narratives: merged list
+      - shared_blind_spot_check: dict with status + reason
       - argument_summary: merged or None
       - object_discipline_check: merged or None
     """
@@ -259,6 +371,12 @@ def merge_structural_forensics(
         "article_omissions": _merge_article_omissions(phase2_outputs),
         "framing_omissions": _merge_framing_omissions(phase2_outputs),
     }
+
+    merged_rivals = _merge_rival_narratives(phase2_outputs)
+    result["rival_narratives"] = merged_rivals
+    result["shared_blind_spot_check"] = _shared_blind_spot_check(
+        phase2_outputs, merged_rivals,
+    )
 
     arg_summary = _merge_argument_summaries(phase2_outputs)
     if arg_summary is not None:

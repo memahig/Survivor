@@ -8,6 +8,7 @@
   "max_questionable_claims_per_reviewer": 12,
   "max_omission_candidates": 4,
   "max_counterfactuals": 3,
+  "max_rival_narratives": 3,
   "centrality_backstop_k": 5,
   "background_sample_n": 0,
   "max_near_duplicate_links": 3,

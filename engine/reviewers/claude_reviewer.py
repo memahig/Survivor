@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FILE: engine/reviewers/claude_reviewer.py
-VERSION: 0.1
+VERSION: 0.2
 PURPOSE:
 Claude (Anthropic) reviewer adapter for Survivor.
 
@@ -10,17 +10,17 @@ CONTRACT:
 - Must return a ReviewerPack dict that passes engine/core/validators.py
 - Must fail closed (RuntimeError) on SDK/key/parse errors.
 
-NOTES:
-- Mirrors engine/reviewers/openai_reviewer.py structure.
-- Uses anthropic SDK: anthropic.Anthropic(api_key=...).messages.create(...)
-- Enforces globally-unique claim_id values by prefixing with "<reviewer>-".
+v0.2 CHANGE:
+- Two-pass Phase 1: skeletal triage (core fields) + enrichment (forensics).
+  Prevents JSON truncation and streaming timeouts from monolithic prompts.
+- Uses streaming API for both passes.
 """
 
 from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from engine.core.triage_utils import list_triage_claims
 from engine.reviewers.base import ReviewerInputs
@@ -36,13 +36,11 @@ class ClaudeReviewer:
     # Anthropic client + key loading
     # ----------------------------
     def _get_client(self):
-        # Lazy import so pipeline doesn't crash until this reviewer is selected.
         try:
             import anthropic  # type: ignore
         except Exception as e:
             raise RuntimeError(f"anthropic SDK not installed or failed to import: {e}")
 
-        # Prefer Survivor's env loader; fail closed if missing.
         try:
             from engine.core.env import get_claude_key  # type: ignore
             api_key = get_claude_key()
@@ -62,15 +60,6 @@ class ClaudeReviewer:
     # Claim-id normalization
     # ----------------------------
     def _prefix_claim_ids(self, pack: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Ensure claim_id values are globally unique by prefixing with reviewer name
-        unless they already start with '<name>-'.
-
-        Also rewrites references in:
-          - causal_links (from_claim_id/to_claim_id)
-          - counterfactual_requirements (target_claim_id)
-          - cross_claim_votes (claim_id, near_duplicate_of)
-        """
         all_claims = list_triage_claims(pack)
         if not all_claims:
             return pack
@@ -82,11 +71,9 @@ class ClaudeReviewer:
             cid = c.get("claim_id")
             if not isinstance(cid, str) or not cid:
                 continue
-
             if cid.startswith(f"{self.name}-"):
                 id_map[cid] = cid
                 continue
-
             new_id = f"{self.name}-{cid}"
             id_map[cid] = new_id
             c["claim_id"] = new_id
@@ -100,45 +87,33 @@ class ClaudeReviewer:
                 return {k: _remap(v) for k, v in x.items()}
             return x
 
-        if "causal_links" in pack:
-            pack["causal_links"] = _remap(pack["causal_links"])
-        if "counterfactual_requirements" in pack:
-            pack["counterfactual_requirements"] = _remap(pack["counterfactual_requirements"])
-        if "cross_claim_votes" in pack:
-            pack["cross_claim_votes"] = _remap(pack["cross_claim_votes"])
+        for key in ("causal_links", "counterfactual_requirements", "cross_claim_votes",
+                     "claim_omissions"):
+            if key in pack:
+                pack[key] = _remap(pack[key])
 
         return pack
 
     # ----------------------------
-    # Prompts (mirror OpenAIReviewer)
+    # Pass 1: Skeletal triage prompt
     # ----------------------------
-    def _phase1_prompt(self, inp: ReviewerInputs) -> str:
+    def _triage_prompt(self, inp: ReviewerInputs) -> str:
         max_pillar = int(inp.config.get("max_pillar_claims_per_reviewer", 10))
         max_quest = int(inp.config.get("max_questionable_claims_per_reviewer", 15))
-        max_omit = int(inp.config.get("max_omission_candidates", 5))
-        max_cf = int(inp.config.get("max_counterfactuals", 5))
         return f"""
-You are an epistemic integrity reviewer. Return ONLY valid JSON — no markdown, no text before or after.
+You are an epistemic integrity reviewer. Return ONLY valid JSON — no markdown, no text.
 Never cut off JSON. Always return a complete, closed JSON object.
 
 HARD CONSTRAINTS — violations cause rejection:
-- type MUST be one of: factual, causal, normative, predictive. Nothing else. Default: factual.
-- centrality MUST be an integer: 1, 2, or 3. Not a word. Default: 2.
+- type MUST be one of: factual, causal, normative, predictive. Default: factual.
+- centrality MUST be an integer: 1, 2, or 3. Default: 2.
 - confidence MUST be: low, medium, or high.
 - classification MUST be: reporting, analysis, advocacy, mixed, or uncertain.
 - evidence_eids MUST only reference eids from the EvidenceBank below.
 - pillar_claims: max {max_pillar} items. IDs: PC1, PC2, ...
 - questionable_claims: max {max_quest} items. IDs: QC1, QC2, ...
-- omission_candidates: max {max_omit} items.
-- counterfactual_requirements: max {max_cf} items.
-- cross_claim_votes MUST be [] in Phase 1.
+- cross_claim_votes MUST be [] in this pass.
 - claim text: under 120 characters. No full sentences — use fragments.
-- missing_frame: under 80 characters.
-- reason_expected: under 20 words.
-- description: under 25 words.
-- why_it_changes_confidence: under 20 words.
-- If output grows large, CUT LIST LENGTHS rather than risk truncation.
-- Prefer fewer, higher-quality items. Use [] for any list with no strong items.
 
 EXAMPLE of correct claim format:
 {{"claim_id": "PC1", "text": "Claim under 120 chars", "type": "factual", "evidence_eids": ["E1"], "centrality": 2}}
@@ -146,6 +121,65 @@ EXAMPLE of correct claim format:
 OBJECT LOCK — analyze the provided article only:
 - Do not discuss the broader topic, provide background education, or offer moral commentary.
 - Answer only: "how is this article constructing its argument?"
+- Never infer author intent or motive. Report structure, not psychology.
+
+REQUIRED KEYS (must all be present):
+reviewer, whole_article_judgment, main_conclusion, pillar_claims, questionable_claims,
+background_claims_summary, evidence_density, claim_tickets, article_tickets, cross_claim_votes
+
+Key shapes:
+- whole_article_judgment: {{classification, confidence, evidence_eids}}
+- main_conclusion: {{text, evidence_eids, confidence}}
+- background_claims_summary: {{total_claims_estimate: int, not_triaged_count: int}}
+- evidence_density: {{claims_count, claims_with_internal_support, external_sources_count}}
+- claim_tickets: [] (empty for now)
+- article_tickets: [] (empty for now)
+- cross_claim_votes: [] (always empty in this pass)
+
+Prefer fewer, higher-quality claims. Use [] for any list with no strong items.
+Do not explain reasoning — just state the claim or finding.
+
+Reviewer name: {self.name}
+
+EVIDENCEBANK (authoritative):
+{json.dumps(inp.evidence_bank, indent=2)}
+
+ARTICLE (normalized text):
+{inp.normalized_text}
+""".strip()
+
+    # ----------------------------
+    # Pass 2: Enrichment prompt
+    # ----------------------------
+    def _enrichment_prompt(self, inp: ReviewerInputs, spine: Dict[str, Any]) -> str:
+        max_omit = int(inp.config.get("max_omission_candidates", 5))
+        max_cf = int(inp.config.get("max_counterfactuals", 5))
+        max_rivals = int(inp.config.get("max_rival_narratives", 3))
+
+        # Spine is the cross-reviewer merged argument skeleton
+        pillar_claims = spine.get("pillar_claims", [])
+        main_conclusion = spine.get("main_conclusion", {})
+
+        return f"""
+You are an epistemic integrity reviewer performing structural enrichment.
+Return ONLY valid JSON — no markdown, no text before or after.
+Never cut off JSON. Always return a complete, closed JSON object.
+
+You already triaged this article. Now analyze its structural features.
+
+HARD CONSTRAINTS:
+- confidence MUST be: low, medium, or high.
+- evidence_eids MUST only reference eids from the EvidenceBank below.
+- omission_candidates: max {max_omit} items.
+- counterfactual_requirements: max {max_cf} items.
+- missing_frame: under 80 characters.
+- reason_expected: under 20 words.
+- description: under 25 words.
+- why_it_changes_confidence: under 20 words.
+- Prefer fewer, higher-quality items. Use [] for any list with no strong items.
+
+OBJECT LOCK — analyze the provided article only:
+- Do not discuss the broader topic, provide background education, or offer moral commentary.
 - If a finding is not grounded in the article text or EvidenceBank, do not include it.
 - Never infer author intent or motive. Report structure, not psychology.
 
@@ -161,20 +195,32 @@ STRUCTURAL FINDINGS to detect (use in article_patterns):
 - framing_escalation (gradual shift from analysis to survival/threat framing)
 - load_bearing_weakness (biggest conclusions rest on weakest claims)
 
+RIVAL NARRATIVE TEST:
+Construct at least one concrete rival narrative that fits the same core facts
+but uses a different primary explanatory lens.
+Then test whether the article's main conclusion survives if that rival narrative
+is taken seriously.
+
+For each rival narrative:
+- rival_narrative_id: RN1, RN2, ...
+- lens: name the alternative explanatory frame (under 10 words)
+- summary: 1-2 sentences, under 120 chars
+- same_core_facts_used: evidence_eids from EvidenceBank that the rival also explains
+- claims_weakened_if_true: claim_ids from the spine that weaken or collapse
+- structural_fragility: low (article survives), elevated (article weakened), high (article collapses)
+- confidence: low, medium, or high
+
+Do not infer intent. Do not defend the rival narrative as true.
+Test whether the article's argument depends on excluding it.
+Max rival narratives: {max_rivals}
+
 REQUIRED KEYS (must all be present):
-reviewer, whole_article_judgment, main_conclusion, pillar_claims, questionable_claims,
-background_claims_summary, scope_markers, causal_links, article_patterns,
-omission_candidates, counterfactual_requirements, evidence_density,
-claim_tickets, article_tickets, cross_claim_votes
+scope_markers, causal_links, article_patterns, omission_candidates, counterfactual_requirements
 
 OPTIONAL KEYS (include when findings exist):
-claim_omissions, article_omissions, framing_omissions, argument_summary, object_discipline_check
+claim_omissions, article_omissions, framing_omissions, argument_summary, object_discipline_check, rival_narratives
 
 Required key shapes:
-- whole_article_judgment: {{classification, confidence, evidence_eids}}
-- main_conclusion: {{text, evidence_eids, confidence}}
-- background_claims_summary: {{total_claims_estimate: int, not_triaged_count: int}}
-- evidence_density: {{claims_count, claims_with_internal_support, external_sources_count}}
 - scope_markers: [{{text, marker_type, evidence_eids}}]
 - causal_links: [{{from_claim_id, to_claim_id, evidence_eids}}]
 - article_patterns: [{{pattern_type, evidence_eids}}]
@@ -187,9 +233,11 @@ Optional key shapes:
 - framing_omissions: [{{frame_used_by_article, missing_frame, alternative_frames: [str], reason_expected, confidence}}]
 - argument_summary: {{main_conclusion: str, supporting_reasons: [str], key_rival_explanations_missing: [str]}}
 - object_discipline_check: {{status: "pass"|"fail", reason: str}}
+- rival_narratives: [{{rival_narrative_id, lens, summary, same_core_facts_used: [str], claims_weakened_if_true: [str], structural_fragility: "low"|"elevated"|"high", confidence}}]
 
-Keep all lists sparse — fewer high-quality items over exhaustive lists.
-Do not explain reasoning — just state the claim or finding.
+MERGED ARGUMENT SPINE (from all reviewers' triage):
+Main conclusion: {json.dumps(main_conclusion)}
+Pillar claims (cross-reviewer): {json.dumps(pillar_claims, indent=2)}
 
 Reviewer name: {self.name}
 
@@ -200,6 +248,9 @@ ARTICLE (normalized text):
 {inp.normalized_text}
 """.strip()
 
+    # ----------------------------
+    # Phase 2 (cross-review) prompt
+    # ----------------------------
     def _phase2_prompt(self, inp: ReviewerInputs, cross_payload: Dict[str, Any]) -> str:
         phase1_outputs = cross_payload.get("phase1_outputs", {})
         if not isinstance(phase1_outputs, dict):
@@ -245,15 +296,13 @@ ARTICLE (normalized text):
     # ----------------------------
     # JSON call helper
     # ----------------------------
-    def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+    def _call_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 16384) -> Dict[str, Any]:
         client = self._get_client()
 
-        # Use streaming to avoid "Streaming is required for operations that
-        # may take longer than 10 minutes" error with high max_tokens.
         try:
             with client.messages.stream(
                 model=self.model,
-                max_tokens=32768,
+                max_tokens=max_tokens,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             ) as stream:
@@ -261,7 +310,6 @@ ARTICLE (normalized text):
         except Exception as e:
             raise RuntimeError(f"Anthropic call failed: {e}")
 
-        # Anthropic returns a list of content blocks; join all text blocks.
         if not resp or not getattr(resp, "content", None):
             raise RuntimeError("Anthropic returned empty response content")
 
@@ -275,7 +323,7 @@ ARTICLE (normalized text):
         if not content:
             raise RuntimeError("Anthropic returned empty text blocks")
 
-        # ---- diagnostic: log output size before parse ----
+        # ---- diagnostic ----
         stop = getattr(resp, "stop_reason", None)
         print(
             f"[{self.name}] raw output: {len(content)} chars, "
@@ -286,18 +334,14 @@ ARTICLE (normalized text):
         # ---- normalize fenced JSON / stray preamble ----
         s = content.strip()
 
-        # Strip ```json ... ``` fences (Claude often wraps despite instruction)
         if s.startswith("```"):
             lines = s.splitlines()
-            # drop first fence line (``` or ```json)
             if lines:
                 lines = lines[1:]
-            # drop trailing fence
             if lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
             s = "\n".join(lines).strip()
 
-        # If still not starting with '{', try extracting outermost JSON object.
         if not s.startswith("{"):
             l = s.find("{")
             r = s.rfind("}")
@@ -316,7 +360,8 @@ ARTICLE (normalized text):
         # ---- diagnostic: section item counts ----
         _diag_parts = []
         for _dk in ("pillar_claims", "questionable_claims", "omission_candidates",
-                     "counterfactual_requirements", "cross_claim_votes"):
+                     "counterfactual_requirements", "cross_claim_votes",
+                     "claim_omissions", "article_omissions", "framing_omissions"):
             _dv = data.get(_dk)
             if isinstance(_dv, list):
                 _diag_parts.append(f"{_dk}={len(_dv)}")
@@ -328,14 +373,48 @@ ARTICLE (normalized text):
     # ----------------------------
     # Public API
     # ----------------------------
-    def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
+
+    # Keys that enrichment may contribute to the final pack.
+    _ENRICHMENT_KEYS = frozenset({
+        "scope_markers", "causal_links", "article_patterns",
+        "omission_candidates", "counterfactual_requirements",
+        "claim_omissions", "article_omissions", "framing_omissions",
+        "argument_summary", "object_discipline_check",
+    })
+
+    def run_triage(self, inp: ReviewerInputs) -> Dict[str, Any]:
+        """Pass 1: skeletal triage — core fields only, fast and low-token."""
         gsae_enabled = inp.config.get("gsae_settings", {}).get("enabled") is True
         system_prompt = build_system_prompt("judge", "machine", include_gsae=gsae_enabled)
-        out = self._call_json(system_prompt, self._phase1_prompt(inp))
-        out["reviewer"] = self.name
-        out["cross_claim_votes"] = []  # Phase 1 must be empty list
-        out = self._prefix_claim_ids(out)
-        return out
+
+        print(f"[{self.name}] Pass 1: skeletal triage", file=sys.stderr)
+        triage = self._call_json(system_prompt, self._triage_prompt(inp), max_tokens=8192)
+        triage["reviewer"] = self.name
+        triage["cross_claim_votes"] = []
+        triage = self._prefix_claim_ids(triage)
+        return triage
+
+    def run_enrichment(self, inp: ReviewerInputs, spine: Dict[str, Any]) -> Dict[str, Any]:
+        """Pass 2: structural forensics using cross-reviewer merged spine."""
+        gsae_enabled = inp.config.get("gsae_settings", {}).get("enabled") is True
+        system_prompt = build_system_prompt("judge", "machine", include_gsae=gsae_enabled)
+
+        print(f"[{self.name}] Pass 2: enrichment", file=sys.stderr)
+        enrichment = self._call_json(
+            system_prompt, self._enrichment_prompt(inp, spine), max_tokens=8192,
+        )
+        return enrichment
+
+    def run_phase1(self, inp: ReviewerInputs) -> Dict[str, Any]:
+        """Backward-compat wrapper: triage + enrichment in one call."""
+        triage = self.run_triage(inp)
+        enrichment = self.run_enrichment(inp, triage)
+
+        merged = dict(triage)
+        for k, v in enrichment.items():
+            if k in self._ENRICHMENT_KEYS:
+                merged[k] = v
+        return merged
 
     def run_phase2(self, inp: ReviewerInputs, cross_review_payload: Dict[str, Any]) -> Dict[str, Any]:
         phase1_all = cross_review_payload["phase1_outputs"]
@@ -347,7 +426,6 @@ ARTICLE (normalized text):
         if not isinstance(phase2_out, dict):
             raise RuntimeError(f"{self.name} Phase2 returned non-dict: {type(phase2_out)}")
 
-        # START FROM PHASE1 PACK (complete ReviewerPack) and overlay Phase2 deltas
         merged = dict(my_phase1)
 
         allowed_overrides = {
@@ -381,7 +459,5 @@ ARTICLE (normalized text):
         if "cross_claim_votes" not in merged:
             merged["cross_claim_votes"] = my_phase1.get("cross_claim_votes", [])
 
-        # Ensure claim ids stay prefixed if Phase2 re-emits claims
         merged = self._prefix_claim_ids(merged)
-
         return merged

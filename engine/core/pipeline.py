@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/pipeline.py
-VERSION: 0.4
+VERSION: 0.5
 PURPOSE:
 Primary execution spine for Survivor.
 
 FLOW:
-Ingest → Normalize → EvidenceBank → Phase1 Reviewers →
-Cross-Review Payload → Phase2 Reviewers →
+Ingest → Normalize → EvidenceBank →
+Pass 1 Triage (all reviewers) → Build Argument Spine →
+Pass 2 Enrichment (all reviewers, receives spine) → Merge →
+Cross-Review Payload → Phase 2 Reviewers →
 Adjudication → Validation → Render Outputs
 
-v0.3 CHANGE:
-- Reviewer imports for real providers are LAZY (inside factories),
-  so empty/stub reviewer files do not crash the pipeline.
+v0.5 CHANGE:
+- Two-pass Phase 1: skeletal triage + enrichment with cross-reviewer spine.
+  Prevents JSON truncation and streaming timeouts from monolithic prompts.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 
 from typing import Optional, Dict, Any, List, Callable
 
@@ -29,6 +32,7 @@ from engine.core.evidence_bank import build_evidence_bank
 from engine.core.adjudicator import adjudicate
 from engine.core.errors import ReviewerPackCompileError
 from engine.core.translator import compile_reviewer_pack
+from engine.core.spine_builder import build_argument_spine
 from engine.core.validators import validate_run
 from engine.render.report import render_report
 from engine.render.debug_report import render_debug
@@ -140,8 +144,58 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     reviewers = _build_reviewers_from_config(config)
 
     # ---------------------------
-    # Phase 1
+    # Phase 1, Pass 1: Skeletal Triage
     # ---------------------------
+    triage_outputs: Dict[str, Any] = {}
+
+    for reviewer in reviewers:
+        inp = ReviewerInputs(
+            article_id=article["id"],
+            source_url=article.get("source_url"),
+            title=article.get("title"),
+            normalized_text=normalized,
+            evidence_bank=evidence_bank,
+            config=config,
+        )
+        raw_triage = reviewer.run_triage(inp)
+        try:
+            compiled = compile_reviewer_pack(
+                reviewer_id=reviewer.name,
+                raw_pack=raw_triage,
+                call_reviewer_fn=reviewer._call_json,
+                config=config,
+                available_eids=available_eids,
+            )
+        except ReviewerPackCompileError as e:
+            _write_compile_error_report(e, outdir)
+            raise RuntimeError(
+                f"Reviewer '{reviewer.name}' failed triage compilation "
+                f"after {e.attempt} attempts"
+            ) from e
+        triage_outputs[reviewer.name] = compiled
+
+    # ---------------------------
+    # Build cross-reviewer argument spine
+    # ---------------------------
+    spine = build_argument_spine(triage_outputs)
+    print(
+        f"[spine] pillar_claims={len(spine.get('pillar_claims', []))}, "
+        f"questionable_claims={len(spine.get('questionable_claims', []))}",
+        file=sys.stderr,
+    )
+
+    # ---------------------------
+    # Phase 1, Pass 2: Enrichment (receives merged spine)
+    # ---------------------------
+    # Keys that enrichment may contribute to the final pack.
+    _ENRICHMENT_KEYS = frozenset({
+        "scope_markers", "causal_links", "article_patterns",
+        "omission_candidates", "counterfactual_requirements",
+        "claim_omissions", "article_omissions", "framing_omissions",
+        "argument_summary", "object_discipline_check",
+        "rival_narratives",
+    })
+
     phase1_outputs: Dict[str, Any] = {}
 
     for reviewer in reviewers:
@@ -153,22 +207,15 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             evidence_bank=evidence_bank,
             config=config,
         )
-        raw_pack = reviewer.run_phase1(inp)
-        try:
-            compiled = compile_reviewer_pack(
-                reviewer_id=reviewer.name,
-                raw_pack=raw_pack,
-                call_reviewer_fn=reviewer._call_json,
-                config=config,
-                available_eids=available_eids,
-            )
-        except ReviewerPackCompileError as e:
-            _write_compile_error_report(e, outdir)
-            raise RuntimeError(
-                f"Reviewer '{reviewer.name}' failed Phase 1 compilation "
-                f"after {e.attempt} attempts"
-            ) from e
-        phase1_outputs[reviewer.name] = compiled
+        enrichment = reviewer.run_enrichment(inp, spine)
+
+        # Merge enrichment into triage pack
+        merged = dict(triage_outputs[reviewer.name])
+        for k, v in enrichment.items():
+            if k in _ENRICHMENT_KEYS:
+                merged[k] = v
+
+        phase1_outputs[reviewer.name] = merged
 
     # ---------------------------
     # Cross-review payload

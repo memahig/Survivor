@@ -143,18 +143,23 @@ go = st.button("Run", use_container_width=True)
 # -----------------------------
 def _run_survivor(*, url: str | None = None, text_content: str | None = None) -> None:
     """Run the Survivor pipeline and display the Blunt Report."""
-    with st.spinner("Generating Blunt Report\u2026"):
-        try:
-            from engine.core.pipeline import run_pipeline
-        except ImportError as e:
-            st.error(f"Failed to import Survivor engine: {e}")
-            return
+    status = st.empty()
+    detail = st.empty()
 
-        report_md = None
-        run_json_str = None
-        run_state = None
+    report_md = None
+    run_json_str = None
+    run_state = None
+    blunt_md = None
+    audit_md = None
+    enriched = None
+    render_err = None
+
+    try:
+        status.info("Importing pipeline...")
+        from engine.core.pipeline import run_pipeline
 
         with tempfile.TemporaryDirectory(prefix="survivor_") as tmpdir:
+            status.info("Preparing temp workspace...")
             textfile_path = None
 
             if text_content:
@@ -162,6 +167,7 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                 with open(textfile_path, "w", encoding="utf-8") as f:
                     f.write(text_content)
 
+            status.info("Running Survivor pipeline...")
             try:
                 run_pipeline(
                     url=url,
@@ -185,9 +191,22 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                         st.warning(f"Could not read compile_error.json: {_read_err}")
                 return
 
-            # Read back generated files
+            status.info("Pipeline finished. Reading outputs...")
+
             report_path = os.path.join(tmpdir, "report.md")
             run_json_path = os.path.join(tmpdir, "run.json")
+
+            detail.code(
+                json.dumps(
+                    {
+                        "report_exists": os.path.exists(report_path),
+                        "run_json_exists": os.path.exists(run_json_path),
+                        "tmpdir": tmpdir,
+                    },
+                    indent=2,
+                ),
+                language="json",
+            )
 
             if os.path.exists(report_path):
                 with open(report_path, "r", encoding="utf-8") as f:
@@ -198,25 +217,23 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
                     run_json_str = f.read()
                 try:
                     run_state = json.loads(run_json_str)
-                except json.JSONDecodeError:
-                    run_state = None
+                except json.JSONDecodeError as e:
+                    st.error(f"run.json exists but could not be parsed: {e}")
+                    st.code(run_json_str[:4000])
+                    return
 
-    # ---- Render via render_bundle ----
-    blunt_md = None
-    audit_md = None
-    enriched = None
-    render_err = None
-    if run_state is not None:
-        try:
+        status.info("Rendering reports...")
+        if run_state is not None:
             from engine.render.render_bundle import render_all
             blunt_md, audit_md, enriched, render_err = render_all(run_state, config={})
-        except Exception as e:
-            st.error(f"Renderer error: {e}")
-            render_err = str(e)
-    elif report_md is None:
-        st.error("Pipeline produced no output (run.json missing or empty).")
+        else:
+            st.warning("Pipeline completed but no run_state was loaded.")
 
-    st.success("Done.")
+    except Exception as e:
+        st.error(f"App-stage error: {e}")
+        return
+
+    status.success("Done.")
 
     tab1, tab2, tab3 = st.tabs(["Blunt Report", "Audit Report", "Machine Trace"])
 

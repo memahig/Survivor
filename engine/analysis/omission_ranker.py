@@ -105,9 +105,15 @@ def rank_omissions(
                     affects_critical = True
                     reason_parts.append(f"affects high-centrality claim {acid}")
 
-        if concern == "high" and affects_critical:
+        # Severity model: impact-aware, not just reviewer-count gated.
+        # An omission affecting load-bearing/high-centrality claims is at least
+        # "important" regardless of how many reviewers caught it.
+        if affects_critical and concern in ("elevated", "high"):
             severity = "load_bearing"
-            severity_reason = "; ".join(reason_parts) if reason_parts else "high concern affecting critical claims"
+            severity_reason = "; ".join(reason_parts) + f" (concern: {concern})"
+        elif affects_critical:
+            severity = "important"
+            severity_reason = "; ".join(reason_parts) if reason_parts else "affects critical claims"
         elif concern in ("elevated", "high"):
             severity = "important"
             severity_reason = f"concern level: {concern}"

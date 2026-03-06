@@ -123,6 +123,10 @@ OBJECT LOCK — analyze the provided article only:
 - Answer only: "how is this article constructing its argument?"
 - Never infer author intent or motive. Report structure, not psychology.
 
+STRICT SCHEMA — output ONLY these keys, nothing else:
+Do not output integrity_assessment or any key not listed below.
+Any extra key causes immediate rejection.
+
 REQUIRED KEYS (must all be present):
 reviewer, whole_article_judgment, main_conclusion, pillar_claims, questionable_claims,
 background_claims_summary, evidence_density, claim_tickets, article_tickets, cross_claim_votes

@@ -44,7 +44,32 @@ from engine.core.translation_rules import (
     build_error_enum_text,
     translate_field,
 )
+from engine.core.schema_constants import REVIEWER_PACK_REQUIRED_KEYS, REVIEWER_PACK_OPTIONAL_KEYS
 from engine.core.validators import normalize_reviewer_pack, validate_reviewer_pack
+
+
+# ---------------------------------------------------------------------------
+# Strip non-schema keys (LLM hallucination guard)
+# ---------------------------------------------------------------------------
+
+# Explicit set of known stray keys models have emitted.
+# Kept small and intentional — not open-ended.
+_KNOWN_STRAY_KEYS: frozenset[str] = frozenset({
+    "integrity_assessment",
+})
+
+_ALLOWED_KEYS: frozenset[str] = (
+    REVIEWER_PACK_REQUIRED_KEYS | REVIEWER_PACK_OPTIONAL_KEYS
+    | frozenset({"reviewer"})  # always present, not in schema constants
+)
+
+
+def _strip_non_schema_keys(pack: Dict[str, Any]) -> List[str]:
+    """Remove keys not in the schema. Returns list of stripped key names."""
+    extra = set(pack.keys()) - _ALLOWED_KEYS
+    for k in extra:
+        del pack[k]
+    return sorted(extra)
 
 
 # ---------------------------------------------------------------------------
@@ -530,6 +555,15 @@ def compile_reviewer_pack(
 
     for attempt in range(1, max_attempts + 1):
         pack = copy.deepcopy(raw_pack) if attempt == 1 else raw_pack
+
+        # Step 0: Strip non-schema keys (LLM hallucination guard)
+        stripped = _strip_non_schema_keys(pack)
+        if stripped:
+            import sys
+            print(
+                f"[translator] stripped non-schema keys from {reviewer_id}: {stripped}",
+                file=sys.stderr,
+            )
 
         # Step 1: Semantic normalization — catches "assertion" → "factual" etc.
         normalize_reviewer_pack(pack)

@@ -312,20 +312,39 @@ ARTICLE (normalized text):
                 f"[SYSTEM CONTRACT]\n{system_prompt}\n[/SYSTEM CONTRACT]\n\n{user_prompt}"
             )
 
-        try:
-            if cfg is not None:
-                resp = client.models.generate_content(
-                    model=self.model,
-                    contents=contents,
-                    config=cfg,
-                )
-            else:
-                resp = client.models.generate_content(
-                    model=self.model,
-                    contents=contents,
-                )
-        except Exception as e:
-            raise RuntimeError(f"Gemini call failed: {e}")
+        max_retries = 3
+        delay = 3
+        last_err = None
+
+        for attempt in range(max_retries):
+            try:
+                if cfg is not None:
+                    resp = client.models.generate_content(
+                        model=self.model,
+                        contents=contents,
+                        config=cfg,
+                    )
+                else:
+                    resp = client.models.generate_content(
+                        model=self.model,
+                        contents=contents,
+                    )
+                break  # success
+            except Exception as e:
+                last_err = e
+                if "503" in str(e) and attempt < max_retries - 1:
+                    import time
+                    print(
+                        f"[{self.name}] 503 UNAVAILABLE, retry {attempt + 1}/{max_retries} "
+                        f"after {delay}s",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * 2, 20)
+                    continue
+                raise RuntimeError(f"Gemini call failed: {e}")
+        else:
+            raise RuntimeError(f"Gemini call failed after {max_retries} retries: {last_err}")
 
         content = getattr(resp, "text", None)
         if not content or not isinstance(content, str):

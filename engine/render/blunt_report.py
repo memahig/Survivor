@@ -92,16 +92,22 @@ def _section_what_it_reads_like(enriched: Dict[str, Any]) -> str:
         lines.append("Not assessed.\n")
         return "".join(lines)
 
-    # Add top 1-2 priority signals as supporting evidence
-    signals = _sl(enriched.get("priority_signals"))
-    shown = 0
-    for sig in signals:
-        if not isinstance(sig, dict):
-            continue
-        summary = _s(sig.get("summary"))
-        if summary and shown < 2:
-            lines.append(f"- {summary}\n")
-            shown += 1
+    # Use reader_interpretation bottom line if available
+    interp = _sd(enriched.get("reader_interpretation"))
+    bottom = _s(interp.get("bottom_line_plain"))
+    if bottom and "error" not in interp:
+        lines.append(f"\n{bottom}\n")
+    else:
+        # Fallback: top 1-2 priority signals
+        signals = _sl(enriched.get("priority_signals"))
+        shown = 0
+        for sig in signals:
+            if not isinstance(sig, dict):
+                continue
+            summary = _s(sig.get("summary"))
+            if summary and shown < 2:
+                lines.append(f"- {summary}\n")
+                shown += 1
 
     return "".join(lines)
 
@@ -143,35 +149,38 @@ def _section_story_in_brief(enriched: Dict[str, Any]) -> str:
 
 
 def _section_how_put_together(enriched: Dict[str, Any]) -> str:
-    """Section 4: How the story is put together."""
-    load_bearing = _sd(enriched.get("load_bearing"))
+    """Section 4: How the story is put together — mechanism blocks from interpretation layer."""
+    interp = _sd(enriched.get("reader_interpretation"))
+    blocks = _sl(interp.get("mechanism_blocks"))
 
     lines = ["\n## How the story is put together\n\n"]
 
-    if "error" in load_bearing:
-        lines.append("Not assessed.\n")
+    if not blocks or "error" in interp:
+        # Fallback to structural summary
+        load_bearing = _sd(enriched.get("load_bearing"))
+        if "error" in load_bearing:
+            lines.append("Not assessed.\n")
+            return "".join(lines)
+        lb_ids = _sl(load_bearing.get("load_bearing_group_ids"))
+        fragility = _s(load_bearing.get("argument_fragility")) or "unknown"
+        if lb_ids:
+            lines.append(
+                f"{len(lb_ids)} claim(s) carry the argument's weight. "
+                f"Argument fragility: **{fragility}**.\n"
+            )
+        else:
+            lines.append("No structural mechanisms detected.\n")
         return "".join(lines)
 
-    lb_ids = _sl(load_bearing.get("load_bearing_group_ids"))
-    wl_ids = _sl(load_bearing.get("weak_link_group_ids"))
-    fragility = _s(load_bearing.get("argument_fragility")) or "unknown"
-
-    n_lb = len(lb_ids)
-    n_wl = len(wl_ids)
-
-    if n_lb > 0:
-        lines.append(
-            f"{n_lb} claim(s) carry the argument's weight. "
-            f"Argument fragility: **{fragility}**.\n"
-        )
-    else:
-        lines.append(
-            f"No load-bearing claims identified. "
-            f"Argument fragility: **{fragility}**.\n"
-        )
-
-    if n_wl > 0:
-        lines.append(f"{n_wl} of these are structurally weak.\n")
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        title = _s(block.get("title"))
+        body = _s(block.get("body"))
+        if title:
+            lines.append(f"### {title}\n\n")
+        if body:
+            lines.append(f"{body}\n\n")
 
     return "".join(lines)
 
@@ -206,47 +215,29 @@ def _section_whats_missing(enriched: Dict[str, Any]) -> str:
 
 
 def _section_bottom_line(enriched: Dict[str, Any]) -> str:
-    """Bottom line"""
-    waj = _sd(enriched.get("adjudicated_whole_article_judgment"))
-    classification = _s(waj.get("classification")) or "not assessed"
-
-    groups = _sl(enriched.get("adjudicated_claims"))
+    """Bottom line — uses reader_interpretation.bottom_line_plain when available."""
+    interp = _sd(enriched.get("reader_interpretation"))
+    bottom = _s(interp.get("bottom_line_plain"))
 
     lines = ["\n## Bottom line\n\n"]
 
-    # Support stats — use adjudication status, not vote arithmetic
+    if bottom and "error" not in interp:
+        lines.append(f"{bottom}\n")
+        return "".join(lines)
+
+    # Fallback to structural summary
+    waj = _sd(enriched.get("adjudicated_whole_article_judgment"))
+    classification = _s(waj.get("classification")) or "not assessed"
+    groups = _sl(enriched.get("adjudicated_claims"))
     total = len([g for g in groups if isinstance(g, dict)])
     supported = sum(
         1 for g in groups
         if isinstance(g, dict) and g.get("adjudication") == "kept"
     )
 
-    # Fragility
-    load_bearing = _sd(enriched.get("load_bearing"))
-    fragility = _s(load_bearing.get("argument_fragility"))
-
-    fragility_desc = ""
-    if fragility == "high":
-        fragility_desc = "The argument is structurally fragile."
-    elif fragility == "elevated":
-        fragility_desc = "The argument has notable structural weaknesses."
-    elif fragility == "low":
-        fragility_desc = "The argument is structurally stable."
-
-    # Top signal
-    signals = _sl(enriched.get("priority_signals"))
-    top_signal = ""
-    if signals and isinstance(signals[0], dict):
-        top_signal = _s(signals[0].get("summary"))
-
     parts = [f"**{classification.title()}.**"]
     if total > 0:
         parts.append(f"{supported} of {total} core claims supported.")
-    if fragility_desc:
-        parts.append(fragility_desc)
-    if top_signal:
-        parts.append(top_signal + ".")
-
     lines.append(" ".join(parts) + "\n")
 
     return "".join(lines)
@@ -326,7 +317,7 @@ def render_blunt_report(
             sections.append(f"\n## {title}\n\nNot assessed.\n")
 
     # Word count enforcement
-    max_words = config.get("blunt_max_words", 300)
+    max_words = config.get("blunt_max_words", 500)
     sections = _enforce_word_limit(sections, max_words)
 
     # Header
@@ -401,6 +392,7 @@ def render_blunt_report_json(
             "load_bearing_count": len(_sl(load_bearing.get("load_bearing_group_ids"))),
             "weak_link_count": len(_sl(load_bearing.get("weak_link_group_ids"))),
             "fragility": _s(load_bearing.get("argument_fragility")),
+            "mechanism_blocks": _sl(_sd(enriched.get("reader_interpretation")).get("mechanism_blocks")),
         },
         "whats_missing": {
             "omissions": sig_omissions,
@@ -411,5 +403,6 @@ def render_blunt_report_json(
             "total_count": len(groups),
             "fragility": _s(load_bearing.get("argument_fragility")),
             "top_signal": _s(signals[0].get("summary")) if signals and isinstance(signals[0], dict) else "",
+            "bottom_line_plain": _s(_sd(enriched.get("reader_interpretation")).get("bottom_line_plain")),
         },
     }

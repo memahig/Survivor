@@ -220,4 +220,11 @@ def enrich_substrate(
     except Exception as e:
         enriched["priority_signals"] = {"error": str(e)}
 
+    # ---- Module 9: Reader interpretation (needs all above) ----
+    try:
+        from engine.analysis.reader_interpretation import interpret_for_reader
+        enriched["reader_interpretation"] = interpret_for_reader(enriched)
+    except Exception as e:
+        enriched["reader_interpretation"] = {"error": str(e)}
+
     return enriched

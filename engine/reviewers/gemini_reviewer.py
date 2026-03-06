@@ -119,7 +119,9 @@ You must output a single object with these keys exactly:
 - reviewer (string)
 - whole_article_judgment (object: classification, confidence, evidence_eids)
 - main_conclusion (object: text, evidence_eids, confidence)
-- claims (list of objects: claim_id, text, type, evidence_eids, centrality)
+- pillar_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — load-bearing claims the article's argument depends on (max 15)
+- questionable_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — epistemically risky claims that warrant audit (max 30)
+- background_claims_summary (object: total_claims_estimate, not_triaged_count) — counts of all claims including those not triaged above
 - scope_markers (list of objects: text, marker_type, evidence_eids)
 - causal_links (list of objects: from_claim_id, to_claim_id, evidence_eids)
 - article_patterns (list of objects: pattern_type, evidence_eids)

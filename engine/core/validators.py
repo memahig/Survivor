@@ -375,9 +375,33 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
         "predictive_claim": "predictive",
     }
 
+    # --- Legacy bridge: claims → questionable_claims ---
+    # LLM reviewers still output "claims" until prompts are updated.
+    # Bridge converts to triage schema so validation passes.
+    if "claims" in pack and not any(
+        k in pack for k in ("pillar_claims", "questionable_claims", "background_claims_summary")
+    ):
+        legacy_claims = pack.get("claims")
+        if isinstance(legacy_claims, list):
+            pack["pillar_claims"] = []
+            pack["questionable_claims"] = list(legacy_claims)
+            triaged_count = sum(1 for c in legacy_claims if isinstance(c, dict))
+            pack["background_claims_summary"] = {
+                "total_claims_estimate": triaged_count,
+                "not_triaged_count": 0,
+            }
+            warnings = pack.setdefault("_policy_warnings", [])
+            warnings.append({
+                "code": "legacy_claims_field_used",
+                "message": (
+                    "Legacy pack used 'claims'. Bridged to triage schema "
+                    "as questionable_claims (audited set)."
+                ),
+            })
+
     # --- Centrality clamping (must be 1, 2, or 3) + claim type normalization ---
     _claim_lists_to_normalize = []
-    for key in ("pillar_claims", "questionable_claims"):
+    for key in ("pillar_claims", "questionable_claims", "claims"):
         cl = pack.get(key)
         if isinstance(cl, list):
             _claim_lists_to_normalize.append(cl)

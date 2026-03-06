@@ -41,6 +41,7 @@ REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "gsae_subject",
     "expression",  # Permissive free-text/alternate-label block (v1.0 translator)
     "_policy_warnings",
+    "claims",  # Legacy: LLM reviewers still emit this until prompts are updated
 })
 
 # ---------------------------------------------------------------------------

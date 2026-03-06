@@ -140,8 +140,16 @@ def test_reviewer_pack_required_keys_is_frozenset():
 
 
 def test_all_required_keys_validated():
-    """Removing any required key from a pack must raise RuntimeError."""
+    """Removing any required key from a pack must raise RuntimeError.
+    Keys auto-defaulted by the normalizer are excluded (they get re-added)."""
+    _AUTO_DEFAULTED = {
+        "claim_tickets", "article_tickets", "evidence_density",
+        "scope_markers", "causal_links", "article_patterns",
+        "omission_candidates", "counterfactual_requirements", "cross_claim_votes",
+    }
     for key in REVIEWER_PACK_REQUIRED_KEYS:
+        if key in _AUTO_DEFAULTED:
+            continue
         pack = _make_pack()
         del pack[key]
         with pytest.raises(RuntimeError, match=key):

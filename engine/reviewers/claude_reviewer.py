@@ -161,14 +161,16 @@ STRUCTURAL FINDINGS to detect (use in article_patterns):
 - framing_escalation (gradual shift from analysis to survival/threat framing)
 - load_bearing_weakness (biggest conclusions rest on weakest claims)
 
-Output a single JSON object with ALL of these keys:
+REQUIRED KEYS (must all be present):
 reviewer, whole_article_judgment, main_conclusion, pillar_claims, questionable_claims,
 background_claims_summary, scope_markers, causal_links, article_patterns,
 omission_candidates, counterfactual_requirements, evidence_density,
-claim_tickets, article_tickets, cross_claim_votes,
+claim_tickets, article_tickets, cross_claim_votes
+
+OPTIONAL KEYS (include when findings exist):
 claim_omissions, article_omissions, framing_omissions, argument_summary, object_discipline_check
 
-Key shapes:
+Required key shapes:
 - whole_article_judgment: {{classification, confidence, evidence_eids}}
 - main_conclusion: {{text, evidence_eids, confidence}}
 - background_claims_summary: {{total_claims_estimate: int, not_triaged_count: int}}
@@ -178,6 +180,8 @@ Key shapes:
 - article_patterns: [{{pattern_type, evidence_eids}}]
 - omission_candidates: [{{missing_frame, reason_expected, confidence}}]
 - counterfactual_requirements: [{{target_claim_id, counterfactual_type, measurable_type, description, why_it_changes_confidence, confidence}}]
+
+Optional key shapes:
 - claim_omissions: [{{target_claim_id, missing_frame, reason_expected, confidence}}]
 - article_omissions: [{{missing_frame, affected_claim_ids, reason_expected, confidence}}]
 - framing_omissions: [{{frame_used_by_article, missing_frame, alternative_frames: [str], reason_expected, confidence}}]

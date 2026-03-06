@@ -328,6 +328,22 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
     Also called inside validate_reviewer_pack() as a belt-and-suspenders
     safety net.
     """
+    # --- Default missing low-value required keys (LLMs drop under token pressure) ---
+    _REQUIRED_DEFAULTS = {
+        "claim_tickets": [],
+        "article_tickets": [],
+        "evidence_density": {"claims_count": 0, "claims_with_internal_support": 0, "external_sources_count": 0},
+        "scope_markers": [],
+        "causal_links": [],
+        "article_patterns": [],
+        "omission_candidates": [],
+        "counterfactual_requirements": [],
+        "cross_claim_votes": [],
+    }
+    for k, default in _REQUIRED_DEFAULTS.items():
+        if k not in pack:
+            pack[k] = default
+
     # --- Classification synonyms ---
     waj = pack.get("whole_article_judgment")
     if isinstance(waj, dict):

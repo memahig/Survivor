@@ -397,3 +397,66 @@ class TestRivalNarrativesMerge:
         sbs = result["shared_blind_spot_check"]
         assert sbs["status"] == "pass"
         assert len(result["rival_narratives"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Argument integrity merge
+# ---------------------------------------------------------------------------
+
+def _make_ai(**overrides):
+    ai = {
+        "main_conclusion": "Anti-Zionism is a mortal threat",
+        "load_bearing_claim_ids": ["PC1"],
+        "weak_link_claim_ids": ["PC1"],
+        "support_chain_summary": ["PC1 supports conclusion"],
+        "argument_fragility": "elevated",
+        "reason": "Omission-dependent reasoning",
+    }
+    ai.update(overrides)
+    return ai
+
+
+class TestArgumentIntegrityMerge:
+
+    def test_preserves_by_reviewer(self):
+        packs = {
+            "openai": _pack(argument_integrity=_make_ai(argument_fragility="low")),
+            "claude": _pack(argument_integrity=_make_ai(argument_fragility="elevated")),
+        }
+        result = merge_structural_forensics(packs)
+        ai = result["argument_integrity"]
+        assert "openai" in ai["by_reviewer"]
+        assert "claude" in ai["by_reviewer"]
+        assert sorted(ai["supporting_reviewers"]) == ["claude", "openai"]
+
+    def test_uses_highest_fragility(self):
+        packs = {
+            "openai": _pack(argument_integrity=_make_ai(argument_fragility="low")),
+            "claude": _pack(argument_integrity=_make_ai(argument_fragility="high")),
+        }
+        result = merge_structural_forensics(packs)
+        assert result["argument_integrity"]["merged_argument_fragility"] == "high"
+
+    def test_unions_load_bearing_and_weak_links(self):
+        packs = {
+            "openai": _pack(argument_integrity=_make_ai(
+                load_bearing_claim_ids=["PC1", "PC2"],
+                weak_link_claim_ids=["PC1"],
+            )),
+            "claude": _pack(argument_integrity=_make_ai(
+                load_bearing_claim_ids=["PC2", "PC3"],
+                weak_link_claim_ids=["PC3"],
+            )),
+        }
+        result = merge_structural_forensics(packs)
+        ai = result["argument_integrity"]
+        assert ai["load_bearing_claim_ids"] == ["PC1", "PC2", "PC3"]
+        assert ai["weak_link_claim_ids"] == ["PC1", "PC3"]
+
+    def test_none_when_no_reviewers_have_it(self):
+        packs = {
+            "openai": _pack(),
+            "claude": _pack(),
+        }
+        result = merge_structural_forensics(packs)
+        assert "argument_integrity" not in result

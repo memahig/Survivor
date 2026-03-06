@@ -784,3 +784,51 @@ def test_rival_narrative_invalid_fragility_raises():
     pack["rival_narratives"] = [_make_rival_narrative(structural_fragility="extreme")]
     with pytest.raises(RuntimeError, match="structural_fragility must be one of"):
         validate_reviewer_pack(pack, _CFG)
+
+
+# ---------------------------------------------------------------------------
+# Argument integrity validation
+# ---------------------------------------------------------------------------
+
+def _make_argument_integrity(**overrides):
+    ai = {
+        "main_conclusion": "Anti-Zionism is a mortal threat to Jews",
+        "load_bearing_claim_ids": ["openai-CL-01"],
+        "weak_link_claim_ids": ["openai-CL-01"],
+        "support_chain_summary": ["CL-01 supports main conclusion"],
+        "argument_fragility": "elevated",
+        "reason": "Conclusion depends on omission-dependent claims",
+    }
+    ai.update(overrides)
+    return ai
+
+
+def test_argument_integrity_valid_passes():
+    pack = _make_pack()
+    pack["argument_integrity"] = _make_argument_integrity()
+    validate_reviewer_pack(pack, _CFG)
+
+
+def test_argument_integrity_missing_main_conclusion_raises():
+    pack = _make_pack()
+    pack["argument_integrity"] = _make_argument_integrity(main_conclusion="")
+    with pytest.raises(RuntimeError, match="main_conclusion must be non-empty str"):
+        validate_reviewer_pack(pack, _CFG)
+
+
+def test_argument_integrity_unknown_load_bearing_claim_id_raises():
+    pack = _make_pack()
+    pack["argument_integrity"] = _make_argument_integrity(
+        load_bearing_claim_ids=["FAKE-99"]
+    )
+    with pytest.raises(RuntimeError, match="unknown claim_id.*FAKE-99"):
+        validate_reviewer_pack(pack, _CFG)
+
+
+def test_argument_integrity_invalid_fragility_raises():
+    pack = _make_pack()
+    pack["argument_integrity"] = _make_argument_integrity(
+        argument_fragility="extreme"
+    )
+    with pytest.raises(RuntimeError, match="argument_fragility must be one of"):
+        validate_reviewer_pack(pack, _CFG)

@@ -213,11 +213,24 @@ Do not infer intent. Do not defend the rival narrative as true.
 Test whether the article's argument depends on excluding it.
 Max rival narratives: {max_rivals}
 
+ARGUMENT INTEGRITY TEST:
+Reassemble the article's overall argument.
+Identify:
+- main_conclusion: the article's final or strongest overall conclusion
+- load_bearing_claim_ids: claim_ids from the spine necessary for that conclusion
+- weak_link_claim_ids: load-bearing claims that are weak, omission-dependent, overgeneralized, or structurally fragile
+- support_chain_summary: 2-4 short lines describing how the conclusion is built
+- argument_fragility: low (conclusion mostly survives), elevated (weakens materially), high (collapses or requires major revision)
+- reason: one short sentence explaining the fragility rating
+Evaluate the assembled argument, not just individual claims.
+Ask whether the conclusion still stands if weak links are removed or rival narratives are admitted.
+Do not infer intent. Analyze the structure of the provided article only.
+
 REQUIRED KEYS (must all be present):
 scope_markers, causal_links, article_patterns, omission_candidates, counterfactual_requirements
 
 OPTIONAL KEYS (include when findings exist):
-claim_omissions, article_omissions, framing_omissions, argument_summary, object_discipline_check, rival_narratives
+claim_omissions, article_omissions, framing_omissions, argument_summary, object_discipline_check, rival_narratives, argument_integrity
 
 Required key shapes:
 - scope_markers: [{{text, marker_type, evidence_eids}}]
@@ -233,6 +246,7 @@ Optional key shapes:
 - argument_summary: {{main_conclusion: str, supporting_reasons: [str], key_rival_explanations_missing: [str]}}
 - object_discipline_check: {{status: "pass"|"fail", reason: str}}
 - rival_narratives: [{{rival_narrative_id, lens, summary, same_core_facts_used: [str], claims_weakened_if_true: [str], structural_fragility: "low"|"elevated"|"high", confidence}}]
+- argument_integrity: {{main_conclusion: str, load_bearing_claim_ids: [str], weak_link_claim_ids: [str], support_chain_summary: [str], argument_fragility: "low"|"elevated"|"high", reason: str}}
 
 MERGED ARGUMENT SPINE (from all reviewers' triage):
 Main conclusion: {json.dumps(main_conclusion)}

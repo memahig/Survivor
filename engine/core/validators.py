@@ -626,6 +626,8 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
         _validate_object_discipline_check(pack)
     if "rival_narratives" in pack:
         _validate_rival_narratives(pack)
+    if "argument_integrity" in pack:
+        _validate_argument_integrity(pack)
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +769,68 @@ def _validate_rival_narratives(pack: Dict[str, Any]) -> None:
             conf in CONFIDENCE_VALUES,
             f"rival_narratives[{i}].confidence must be one of {sorted(CONFIDENCE_VALUES)}",
         )
+
+
+def _validate_argument_integrity(pack: Dict[str, Any]) -> None:
+    obj = pack["argument_integrity"]
+    _require(isinstance(obj, dict), "argument_integrity must be dict")
+
+    main_conclusion = obj.get("main_conclusion")
+    _require(
+        isinstance(main_conclusion, str) and main_conclusion.strip(),
+        "argument_integrity.main_conclusion must be non-empty str",
+    )
+
+    # Collect valid claim_ids from the pack
+    valid_ids: Set[str] = set()
+    for key in ("pillar_claims", "questionable_claims"):
+        claims = pack.get(key, [])
+        if isinstance(claims, list):
+            for c in claims:
+                if isinstance(c, dict):
+                    cid = c.get("claim_id")
+                    if isinstance(cid, str) and cid.strip():
+                        valid_ids.add(cid)
+
+    load_bearing = obj.get("load_bearing_claim_ids")
+    _require(
+        _is_list_of_str(load_bearing),
+        "argument_integrity.load_bearing_claim_ids must be list[str]",
+    )
+    for cid in load_bearing:
+        _require(
+            cid in valid_ids,
+            f"argument_integrity.load_bearing_claim_ids contains unknown claim_id: {cid!r}",
+        )
+
+    weak_links = obj.get("weak_link_claim_ids")
+    _require(
+        _is_list_of_str(weak_links),
+        "argument_integrity.weak_link_claim_ids must be list[str]",
+    )
+    for cid in weak_links:
+        _require(
+            cid in valid_ids,
+            f"argument_integrity.weak_link_claim_ids contains unknown claim_id: {cid!r}",
+        )
+
+    chain = obj.get("support_chain_summary")
+    _require(
+        _is_list_of_str(chain),
+        "argument_integrity.support_chain_summary must be list[str]",
+    )
+
+    fragility = obj.get("argument_fragility")
+    _require(
+        fragility in _FRAGILITY_VALUES,
+        f"argument_integrity.argument_fragility must be one of {sorted(_FRAGILITY_VALUES)}",
+    )
+
+    reason = obj.get("reason")
+    _require(
+        isinstance(reason, str) and reason.strip(),
+        "argument_integrity.reason must be non-empty str",
+    )
 
 
 def _validate_object_discipline_check(pack: Dict[str, Any]) -> None:

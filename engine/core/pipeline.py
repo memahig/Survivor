@@ -194,6 +194,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
         "claim_omissions", "article_omissions", "framing_omissions",
         "argument_summary", "object_discipline_check",
         "rival_narratives",
+        "argument_integrity",
     })
 
     phase1_outputs: Dict[str, Any] = {}

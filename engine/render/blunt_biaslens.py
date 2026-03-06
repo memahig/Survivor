@@ -506,6 +506,63 @@ def _render_shared_blind_spot(forensics: Dict[str, Any]) -> str:
     return "".join(lines)
 
 
+def _render_argument_integrity(
+    forensics: Dict[str, Any],
+    claim_index: Dict[str, Dict[str, Any]],
+) -> str:
+    """Render the argument integrity evaluation — how stable is the argument."""
+    ai = forensics.get("argument_integrity")
+    if not isinstance(ai, dict):
+        return ""
+
+    lines: List[str] = []
+    lines.append("### How stable the argument is\n\n")
+
+    # Main conclusion candidates
+    candidates = ai.get("main_conclusion_candidates", {})
+    if candidates:
+        # Pick the longest as representative
+        best = max(candidates.values(), key=len) if candidates else ""
+        if best:
+            lines.append(f"The article's main conclusion: *{best}*\n\n")
+
+    # Load-bearing claims
+    load_bearing = ai.get("load_bearing_claim_ids", [])
+    if load_bearing:
+        lines.append("Load-bearing claims (conclusion depends on these):\n\n")
+        for cid in load_bearing:
+            c = claim_index.get(cid)
+            text = _s(c.get("text")) if c else cid
+            lines.append(f"- {text}\n")
+        lines.append("\n")
+
+    # Weak links
+    weak_links = ai.get("weak_link_claim_ids", [])
+    if weak_links:
+        lines.append("Weak links carrying the argument:\n\n")
+        for cid in weak_links:
+            c = claim_index.get(cid)
+            text = _s(c.get("text")) if c else cid
+            lines.append(f"- {text}\n")
+        lines.append("\n")
+
+    # Fragility
+    fragility = ai.get("merged_argument_fragility", "")
+    if fragility:
+        lines.append(f"**Argument fragility: {fragility}**\n\n")
+
+    # Per-reviewer reasons
+    reasons = ai.get("reason_by_reviewer", {})
+    if reasons:
+        for reviewer, reason in sorted(reasons.items()):
+            if reason.strip():
+                lines.append(f"- {reviewer.capitalize()}: {reason}\n")
+        lines.append("\n")
+
+    lines.append("\n")
+    return "".join(lines)
+
+
 def _top_counterfactuals(
     cfs: List[Dict[str, Any]],
     claim_index: Dict[str, Dict[str, Any]],
@@ -1016,6 +1073,9 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
 
     # ---- Rival narratives (adversarial symmetry test) ----
     lines.append(_render_rival_narratives(forensics, claim_index))
+
+    # ---- Argument integrity (how stable is the argument) ----
+    lines.append(_render_argument_integrity(forensics, claim_index))
 
     # ---- Shared blind spot warning ----
     lines.append(_render_shared_blind_spot(forensics))

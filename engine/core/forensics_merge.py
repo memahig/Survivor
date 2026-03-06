@@ -348,6 +348,68 @@ def _shared_blind_spot_check(
 
 
 # ---------------------------------------------------------------------------
+# Argument integrity — merge into multi-reviewer view
+# ---------------------------------------------------------------------------
+
+def _merge_argument_integrity(
+    packs: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    """
+    Collect argument_integrity from each reviewer that has one.
+    Merge conservatively: union load-bearing/weak-link ids, take highest fragility.
+    """
+    items: Dict[str, Dict[str, Any]] = {}
+    for reviewer, pack in packs.items():
+        ai = pack.get("argument_integrity")
+        if isinstance(ai, dict):
+            items[reviewer] = ai
+
+    if not items:
+        return None
+
+    all_load_bearing: set = set()
+    all_weak_links: set = set()
+    all_chain: set = set()
+    fragility_by_reviewer: Dict[str, str] = {}
+    reasons: Dict[str, str] = {}
+
+    for reviewer, ai in items.items():
+        for cid in ai.get("load_bearing_claim_ids", []):
+            if isinstance(cid, str):
+                all_load_bearing.add(cid)
+        for cid in ai.get("weak_link_claim_ids", []):
+            if isinstance(cid, str):
+                all_weak_links.add(cid)
+        for line in ai.get("support_chain_summary", []):
+            if isinstance(line, str) and line.strip():
+                all_chain.add(line.strip())
+        fragility_by_reviewer[reviewer] = ai.get("argument_fragility", "elevated")
+        reasons[reviewer] = ai.get("reason", "")
+
+    # Choose highest fragility conservatively
+    frag_order = {"low": 0, "elevated": 1, "high": 2}
+    merged_fragility = max(
+        fragility_by_reviewer.values(),
+        key=lambda x: frag_order.get(x, 0),
+    )
+
+    return {
+        "by_reviewer": items,
+        "main_conclusion_candidates": {
+            reviewer: ai.get("main_conclusion", "")
+            for reviewer, ai in items.items()
+        },
+        "load_bearing_claim_ids": sorted(all_load_bearing),
+        "weak_link_claim_ids": sorted(all_weak_links),
+        "support_chain_summary": sorted(all_chain),
+        "argument_fragility_by_reviewer": fragility_by_reviewer,
+        "merged_argument_fragility": merged_fragility,
+        "reason_by_reviewer": reasons,
+        "supporting_reviewers": sorted(items.keys()),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -385,5 +447,9 @@ def merge_structural_forensics(
     obj_discipline = _merge_object_discipline(phase2_outputs)
     if obj_discipline is not None:
         result["object_discipline_check"] = obj_discipline
+
+    arg_integrity = _merge_argument_integrity(phase2_outputs)
+    if arg_integrity is not None:
+        result["argument_integrity"] = arg_integrity
 
     return result

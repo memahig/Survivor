@@ -373,35 +373,24 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
         "causal_claim": "causal",
         "normative_claim": "normative",
         "predictive_claim": "predictive",
+        # creative types Claude/Gemini invent under token pressure
+        "historical_generalization": "factual",
+        "conceptual_claim": "normative",
+        "historical_causal_claim": "causal",
+        "analytical_claim": "normative",
+        "unsupported_generalization": "factual",
+        "question_begging_claim": "normative",
+        "scope_softening_concession": "normative",
+        "interpretive": "normative",
+        "empirical": "factual",
+        "evaluative": "normative",
+        "comparative": "factual",
+        "definitional": "factual",
     }
-
-    # --- Legacy bridge: claims → questionable_claims ---
-    # LLM reviewers still output "claims" until prompts are updated.
-    # Bridge converts to triage schema so validation passes.
-    if "claims" in pack and not any(
-        k in pack for k in ("pillar_claims", "questionable_claims", "background_claims_summary")
-    ):
-        legacy_claims = pack.get("claims")
-        if isinstance(legacy_claims, list):
-            pack["pillar_claims"] = []
-            pack["questionable_claims"] = list(legacy_claims)
-            triaged_count = sum(1 for c in legacy_claims if isinstance(c, dict))
-            pack["background_claims_summary"] = {
-                "total_claims_estimate": triaged_count,
-                "not_triaged_count": 0,
-            }
-            warnings = pack.setdefault("_policy_warnings", [])
-            warnings.append({
-                "code": "legacy_claims_field_used",
-                "message": (
-                    "Legacy pack used 'claims'. Bridged to triage schema "
-                    "as questionable_claims (audited set)."
-                ),
-            })
 
     # --- Centrality clamping (must be 1, 2, or 3) + claim type normalization ---
     _claim_lists_to_normalize = []
-    for key in ("pillar_claims", "questionable_claims", "claims"):
+    for key in ("pillar_claims", "questionable_claims"):
         cl = pack.get(key)
         if isinstance(cl, list):
             _claim_lists_to_normalize.append(cl)
@@ -561,6 +550,22 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
 
     pillar = _clamp_claim_list(pack, "pillar_claims", max_pillar, "pillar_claims_truncated")
     questionable = _clamp_claim_list(pack, "questionable_claims", max_questionable, "questionable_claims_truncated")
+
+    # Clamp omission_candidates and counterfactual_requirements
+    max_omit = int(config.get("max_omission_candidates", 5))
+    max_cf = int(config.get("max_counterfactuals", 5))
+    for list_key, cap, warn_code in (
+        ("omission_candidates", max_omit, "omission_candidates_truncated"),
+        ("counterfactual_requirements", max_cf, "counterfactuals_truncated"),
+    ):
+        items = pack.get(list_key)
+        if isinstance(items, list) and len(items) > cap:
+            pack[list_key] = items[:cap]
+            warnings = pack.setdefault("_policy_warnings", [])
+            warnings.append({
+                "code": warn_code,
+                "message": f"{list_key} truncated from {len(items)} to {cap}",
+            })
 
     # Vote cleanup: kept_ids = union(pillar_ids, questionable_ids)
     kept_ids: Set[str] = set()

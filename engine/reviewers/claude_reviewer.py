@@ -19,6 +19,7 @@ NOTES:
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any, Dict
 
 from engine.core.triage_utils import list_triage_claims
@@ -112,31 +113,61 @@ class ClaudeReviewer:
     # Prompts (mirror OpenAIReviewer)
     # ----------------------------
     def _phase1_prompt(self, inp: ReviewerInputs) -> str:
+        max_pillar = int(inp.config.get("max_pillar_claims_per_reviewer", 10))
+        max_quest = int(inp.config.get("max_questionable_claims_per_reviewer", 15))
+        max_omit = int(inp.config.get("max_omission_candidates", 5))
+        max_cf = int(inp.config.get("max_counterfactuals", 5))
         return f"""
-You are an epistemic integrity reviewer. Return ONLY valid JSON.
+You are an epistemic integrity reviewer. Return ONLY valid JSON — no text before or after.
 
-You must output a single object with these keys exactly:
+If output size becomes large, reduce list lengths below the maximums rather than exceeding token limits.
+Never cut off JSON. Always return a complete closed JSON object.
+
+Output a single JSON object with these keys exactly:
 - reviewer (string)
 - whole_article_judgment (object: classification, confidence, evidence_eids)
 - main_conclusion (object: text, evidence_eids, confidence)
-- pillar_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — load-bearing claims the article's argument depends on (max 15)
-- questionable_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — epistemically risky claims that warrant audit (max 30)
-- background_claims_summary (object: total_claims_estimate, not_triaged_count) — counts of all claims including those not triaged above
+- pillar_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — load-bearing claims (max {max_pillar})
+- questionable_claims (list of objects: claim_id, text, type, evidence_eids, centrality) — epistemically risky claims (max {max_quest})
+- background_claims_summary (object: total_claims_estimate:int, not_triaged_count:int)
 - scope_markers (list of objects: text, marker_type, evidence_eids)
 - causal_links (list of objects: from_claim_id, to_claim_id, evidence_eids)
 - article_patterns (list of objects: pattern_type, evidence_eids)
-- omission_candidates (list of objects: missing_frame, reason_expected, confidence)
-- counterfactual_requirements (list of objects: target_claim_id, counterfactual_type, measurable_type, description, why_it_changes_confidence, confidence)
+- omission_candidates (list of objects: missing_frame, reason_expected, confidence) — max {max_omit}
+- counterfactual_requirements (list of objects: target_claim_id, counterfactual_type, measurable_type, description, why_it_changes_confidence, confidence) — max {max_cf}
 - evidence_density (object: claims_count, claims_with_internal_support, external_sources_count)
 - claim_tickets (list)
 - article_tickets (list)
 - cross_claim_votes (list)  # MUST be [] in Phase 1
 
-Hard rules:
-- evidence_eids must ONLY reference eids that exist in the provided EvidenceBank.
-- confidence must be one of: low, medium, high.
-- classification must be a short label like: reporting, analysis, advocacy, uncertain.
-- If uncertain, evidence_eids may be [].
+STRICT ENUM RULES — do not invent new labels:
+- type must be exactly one of: factual, causal, normative, predictive. If uncertain, use "factual".
+- centrality must be exactly one of: 1, 2, 3. Not a word. If uncertain, use 2.
+- confidence must be exactly one of: low, medium, high.
+- classification must be exactly one of: reporting, analysis, advocacy, mixed, uncertain.
+- evidence_eids must only reference eids that exist in the provided EvidenceBank.
+- If classification is "uncertain", evidence_eids may be [].
+
+ID RULES:
+- pillar claim_ids: PC1, PC2, ...
+- questionable claim_ids: QC1, QC2, ...
+
+TRIAGE RULES:
+- A claim may appear in both lists only if it is both load-bearing and epistemically risky.
+- Otherwise place it in only one list.
+- Use [] for any optional list with no strong items.
+- Do not fill lists just because a maximum exists.
+
+FIELD BUDGETS:
+- claim text: under 120 characters
+- missing_frame: under 80 characters
+- reason_expected: under 20 words
+- description: under 25 words
+- why_it_changes_confidence: under 20 words
+
+In Phase 1, keep omission_candidates and counterfactual_requirements especially sparse.
+Prefer fewer, higher-quality items over exhaustive lists.
+Do not explain reasoning — just state the claim or finding.
 
 Reviewer name: {self.name}
 
@@ -198,7 +229,7 @@ ARTICLE (normalized text):
         try:
             resp = client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=16384,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )
@@ -218,6 +249,14 @@ ARTICLE (normalized text):
         content = "\n".join(parts).strip()
         if not content:
             raise RuntimeError("Anthropic returned empty text blocks")
+
+        # ---- diagnostic: log output size before parse ----
+        stop = getattr(resp, "stop_reason", None)
+        print(
+            f"[{self.name}] raw output: {len(content)} chars, "
+            f"{len(content.splitlines())} lines, stop_reason={stop}",
+            file=sys.stderr,
+        )
 
         # ---- normalize fenced JSON / stray preamble ----
         s = content.strip()
@@ -248,6 +287,16 @@ ARTICLE (normalized text):
 
         if not isinstance(data, dict):
             raise RuntimeError("Anthropic JSON root must be an object/dict")
+
+        # ---- diagnostic: section item counts ----
+        _diag_parts = []
+        for _dk in ("pillar_claims", "questionable_claims", "omission_candidates",
+                     "counterfactual_requirements", "cross_claim_votes"):
+            _dv = data.get(_dk)
+            if isinstance(_dv, list):
+                _diag_parts.append(f"{_dk}={len(_dv)}")
+        if _diag_parts:
+            print(f"[{self.name}] sections: {', '.join(_diag_parts)}", file=sys.stderr)
 
         return data
 

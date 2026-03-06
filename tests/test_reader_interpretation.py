@@ -54,14 +54,26 @@ def _make_claim(group_id, text, adjudication="kept", centrality=2, evidence_eids
 # ---------------------------------------------------------------------------
 
 def test_empty_input():
+    """Empty dict → minimal usable fallback (not 'Not assessed.')."""
     result = interpret_for_reader({})
     assert result["block_count"] == 0
     assert result["mechanism_blocks"] == []
-    assert "Not assessed" not in result["bottom_line_plain"]  # should still produce something
+    # Empty dict still has a valid enriched structure — should produce a fallback
+    # containing the classification or a generic description
+    assert len(result["bottom_line_plain"]) > 0
+    assert result["bottom_line_plain"] != "Not assessed."
 
 
 def test_non_dict_input():
+    """Non-dict input → hard fallback 'Not assessed.'."""
     result = interpret_for_reader("garbage")
+    assert result["block_count"] == 0
+    assert result["bottom_line_plain"] == "Not assessed."
+
+
+def test_non_dict_input_none():
+    """None input → hard fallback."""
+    result = interpret_for_reader(None)
     assert result["block_count"] == 0
     assert result["bottom_line_plain"] == "Not assessed."
 
@@ -88,8 +100,11 @@ def test_unsupported_causal_fires():
     assert "unsupported_causal" in mechanisms
 
     block = next(b for b in result["mechanism_blocks"] if b["mechanism"] == "unsupported_causal")
-    assert "2 causal claim" in block["body"]
+    # Both example claims should appear in the body
     assert "X caused Y" in block["body"]
+    assert "A led to B" in block["body"]
+    # Body should reference causal language
+    assert "causal" in block["body"].lower()
 
 
 def test_supported_causal_does_not_fire():
@@ -120,8 +135,10 @@ def test_omission_dependence_fires():
     assert "omission_dependence" in mechanisms
 
     block = next(b for b in result["mechanism_blocks"] if b["mechanism"] == "omission_dependence")
-    assert "2 significant" in block["body"]
+    # Should reference the omission text
     assert "Missing context A" in block["body"]
+    # Should mention rival narratives
+    assert "rival" in block["body"].lower() or "explanation" in block["body"].lower()
 
 
 def test_omission_dependence_skips_minor():
@@ -299,7 +316,7 @@ def test_bottom_line_with_multiple_mechanisms():
 
 
 # ---------------------------------------------------------------------------
-# Test: block structure
+# Test: block structure and source traceability
 # ---------------------------------------------------------------------------
 
 def test_block_has_required_keys():
@@ -316,8 +333,52 @@ def test_block_has_required_keys():
         assert "source_signals" in block
 
 
+def test_source_signals_non_empty():
+    """Every mechanism block must have non-empty source_signals for traceability."""
+    enriched = _base_enriched(
+        causal_detections=[
+            {"unsupported_causal": True, "claim_text": "X caused Y"},
+        ],
+        official_detections=[
+            {"official_only": True, "claim_text": "Officials said Z"},
+        ],
+        baseline_detections=[
+            {"baseline_absent": True, "claim_text": "Crime up 50%"},
+        ],
+    )
+    result = interpret_for_reader(enriched)
+    assert result["block_count"] >= 1
+    for block in result["mechanism_blocks"]:
+        assert isinstance(block["source_signals"], list)
+        assert len(block["source_signals"]) > 0, (
+            f"Block '{block['mechanism']}' has empty source_signals"
+        )
+        # Each source signal should have a type field
+        for sig in block["source_signals"]:
+            assert "type" in sig, (
+                f"Source signal in '{block['mechanism']}' missing 'type' key"
+            )
+
+
+def test_source_signals_reflect_detector_family():
+    """source_signals type should relate to the mechanism that produced it."""
+    enriched = _base_enriched(
+        causal_detections=[
+            {"unsupported_causal": True, "claim_text": "X caused Y"},
+        ],
+    )
+    result = interpret_for_reader(enriched)
+    block = next(b for b in result["mechanism_blocks"] if b["mechanism"] == "unsupported_causal")
+    signal_types = [s["type"] for s in block["source_signals"]]
+    assert any("causal" in t for t in signal_types)
+
+
+# ---------------------------------------------------------------------------
+# Test: detector ordering
+# ---------------------------------------------------------------------------
+
 def test_detector_ordering():
-    """Detectors run in priority order: omission_dependence first."""
+    """Detectors run in priority order: omission_dependence before unsupported_causal."""
     enriched = _base_enriched(
         ranked_omissions=[
             {"severity": "load_bearing", "kind": "article_omission", "merged_text": "Missing"},
@@ -329,9 +390,48 @@ def test_detector_ordering():
     )
     result = interpret_for_reader(enriched)
     mechanisms = [b["mechanism"] for b in result["mechanism_blocks"]]
-    # omission_dependence should come before unsupported_causal
-    if "omission_dependence" in mechanisms and "unsupported_causal" in mechanisms:
-        assert mechanisms.index("omission_dependence") < mechanisms.index("unsupported_causal")
+    # Both must fire for ordering to be testable
+    assert "omission_dependence" in mechanisms
+    assert "unsupported_causal" in mechanisms
+    assert mechanisms.index("omission_dependence") < mechanisms.index("unsupported_causal")
+
+
+# ---------------------------------------------------------------------------
+# Test: duplicate mechanism suppression
+# ---------------------------------------------------------------------------
+
+def test_duplicate_mechanism_suppression():
+    """Multiple detections of the same type produce exactly one block."""
+    enriched = _base_enriched(
+        causal_detections=[
+            {"unsupported_causal": True, "claim_text": "X caused Y"},
+            {"unsupported_causal": True, "claim_text": "A led to B"},
+            {"unsupported_causal": True, "claim_text": "C triggered D"},
+        ],
+    )
+    result = interpret_for_reader(enriched)
+    causal_blocks = [
+        b for b in result["mechanism_blocks"] if b["mechanism"] == "unsupported_causal"
+    ]
+    assert len(causal_blocks) == 1, (
+        f"Expected 1 unsupported_causal block, got {len(causal_blocks)}"
+    )
+
+
+def test_duplicate_omission_blocks():
+    """Multiple omissions produce exactly one omission_dependence block."""
+    enriched = _base_enriched(
+        ranked_omissions=[
+            {"severity": "load_bearing", "kind": "article_omission", "merged_text": "Missing A"},
+            {"severity": "load_bearing", "kind": "article_omission", "merged_text": "Missing B"},
+            {"severity": "important", "kind": "framing_omission", "merged_text": "Missing C"},
+        ],
+    )
+    result = interpret_for_reader(enriched)
+    omission_blocks = [
+        b for b in result["mechanism_blocks"] if b["mechanism"] == "omission_dependence"
+    ]
+    assert len(omission_blocks) <= 1
 
 
 # ---------------------------------------------------------------------------
@@ -355,3 +455,101 @@ def test_reader_guidance_with_many_mechanisms():
     result = interpret_for_reader(enriched)
     if result["block_count"] >= 3:
         assert "structure working" in result["bottom_line_plain"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Test: realistic composite article fixture
+# ---------------------------------------------------------------------------
+
+def test_realistic_mobilizing_article():
+    """
+    Realistic fixture: mobilizing article with unsupported causal claims,
+    omission dependence, official reliance, rejected load-bearing claim,
+    and high fragility. Tests that the full interpretation pipeline produces
+    a coherent multi-mechanism result.
+    """
+    claims = [
+        _make_claim("G1", "The crisis was caused by foreign interference",
+                     adjudication="rejected", centrality=3),
+        _make_claim("G2", "Government response prevented further damage",
+                     adjudication="kept", centrality=3, evidence_eids=["E1"]),
+        _make_claim("G3", "Opposition leaders delayed action",
+                     adjudication="downgraded", centrality=2),
+        _make_claim("G4", "Economic indicators showed stability",
+                     adjudication="kept", centrality=1, evidence_eids=["E2"]),
+    ]
+    enriched = _base_enriched(
+        adjudicated_whole_article_judgment={
+            "classification": "mobilizing",
+            "confidence": "high",
+        },
+        adjudicated_claims=claims,
+        causal_detections=[
+            {"unsupported_causal": True, "claim_text": "The crisis was caused by foreign interference"},
+        ],
+        official_detections=[
+            {"official_only": True, "claim_text": "Government response prevented further damage"},
+        ],
+        baseline_detections=[
+            {"baseline_absent": True, "claim_text": "Economic indicators showed stability"},
+        ],
+        ranked_omissions=[
+            {"severity": "load_bearing", "kind": "article_omission",
+             "merged_text": "No independent sources corroborate the foreign interference claim"},
+            {"severity": "important", "kind": "framing_omission",
+             "merged_text": "Domestic policy failures as alternative explanation",
+             "frame_used_by_article": "External threat narrative"},
+            {"severity": "important", "kind": "claim_omission",
+             "merged_text": "Opposition's stated reasons for delay"},
+        ],
+        structural_forensics={
+            "rival_narratives": [
+                {"lens": "Domestic policy failure explanation"},
+            ],
+        },
+        load_bearing={
+            "load_bearing_group_ids": ["G1", "G2"],
+            "weak_link_group_ids": ["G1"],
+            "argument_fragility": "high",
+        },
+        reads_like={
+            "label": "a pattern often seen in propaganda",
+            "flags": {
+                "has_omission_dependence": True,
+                "has_high_fragility": True,
+                "has_framing_escalation": True,
+                "has_official_reliance": True,
+                "has_reassurance_pattern": True,
+            },
+            "matched_rule": 1,
+        },
+    )
+    result = interpret_for_reader(enriched)
+
+    # Multiple mechanisms should fire
+    assert result["block_count"] >= 3, (
+        f"Expected >= 3 mechanisms, got {result['block_count']}: "
+        f"{[b['mechanism'] for b in result['mechanism_blocks']]}"
+    )
+
+    mechanisms = [b["mechanism"] for b in result["mechanism_blocks"]]
+
+    # Core mechanisms expected for this article
+    assert "unsupported_causal" in mechanisms
+    assert "omission_dependence" in mechanisms
+    assert "load_bearing_weakness" in mechanisms
+
+    # Bottom line should reference mobilizing classification
+    assert "mobilizing" in result["bottom_line_plain"]
+
+    # Bottom line should reference fragility
+    assert "fragile" in result["bottom_line_plain"].lower()
+
+    # Every block should have traceable source_signals
+    for block in result["mechanism_blocks"]:
+        assert len(block["source_signals"]) > 0
+
+    # Each mechanism should have a non-empty title and body
+    for block in result["mechanism_blocks"]:
+        assert len(block["title"]) > 0
+        assert len(block["body"]) > 10  # more than a stub

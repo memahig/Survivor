@@ -841,9 +841,18 @@ def render_blunt_biaslens(run_state: Dict[str, Any], config: Dict[str, Any]) -> 
             lines.append(f"**{model}:**\n")
             for om in omits:
                 om = _sd(om)
-                txt = _s(om.get("text") or om.get("description") or "")
+                txt = _s(
+                    om.get("missing_frame")
+                    or om.get("text")
+                    or om.get("description")
+                    or ""
+                )
                 if txt:
-                    lines.append(f"- {txt}\n")
+                    reason = _s(om.get("reason_expected") or "")
+                    if reason:
+                        lines.append(f"- {txt} — {reason}\n")
+                    else:
+                        lines.append(f"- {txt}\n")
             lines.append("\n")
 
     lines.append("\n---\n")

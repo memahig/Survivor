@@ -20,7 +20,9 @@ from __future__ import annotations
 REVIEWER_PACK_REQUIRED_KEYS: frozenset[str] = frozenset({
     "whole_article_judgment",
     "main_conclusion",
-    "claims",
+    "pillar_claims",
+    "questionable_claims",
+    "background_claims_summary",
     "scope_markers",
     "causal_links",
     "article_patterns",
@@ -38,6 +40,8 @@ REVIEWER_PACK_OPTIONAL_KEYS: frozenset[str] = frozenset({
     "gsae_observation",
     "gsae_subject",
     "expression",  # Permissive free-text/alternate-label block (v1.0 translator)
+    "_policy_warnings",
+    "claims",  # TEMP(PR1): allow legacy 'claims' for adjudicator compatibility; remove in PR2
 })
 
 # ---------------------------------------------------------------------------

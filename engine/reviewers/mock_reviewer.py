@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 from engine.reviewers.base import ReviewerInputs
 from engine.core.near_duplicates import build_edges_from_claim_texts
+from engine.core.triage_utils import list_triage_claims
 
 
 class MockReviewer:
@@ -51,7 +52,13 @@ class MockReviewer:
                 "evidence_eids": ["E1"],
                 "confidence": "medium",
             },
-            "claims": claims,
+            "pillar_claims": [claims[0]],
+            "questionable_claims": [claims[1]],
+            "background_claims_summary": {
+                "total_claims_estimate": len(claims),
+                "not_triaged_count": 0,
+            },
+            "claims": claims,  # TEMP(PR1): adjudicator compat; remove in PR2
             "scope_markers": [
                 {"text": "greatest", "marker_type": "greatest", "evidence_eids": ["E1"]}
             ],
@@ -100,7 +107,7 @@ class MockReviewer:
         # Build master claim index from ALL reviewers
         claim_index: Dict[str, Dict[str, Any]] = {}
         for m, pack in phase1.items():
-            for c in pack["claims"]:
+            for c in list_triage_claims(pack):
                 claim_index[c["claim_id"]] = c
 
         # Deterministic near-duplicate edges by text similarity

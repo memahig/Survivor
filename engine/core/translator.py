@@ -83,15 +83,16 @@ def _annotate_raw_fields(pack: Dict[str, Any]) -> None:
             if isinstance(val, str):
                 waj[raw_field] = val
 
-    claims = pack.get("claims")
-    if isinstance(claims, list):
-        for c in claims:
-            if not isinstance(c, dict):
-                continue
-            for field, raw_field in _CLAIM_ANNOTATION_PATHS:
-                val = c.get(field)
-                if isinstance(val, str):
-                    c[raw_field] = val
+    for list_key in ("pillar_claims", "questionable_claims"):
+        claims = pack.get(list_key)
+        if isinstance(claims, list):
+            for c in claims:
+                if not isinstance(c, dict):
+                    continue
+                for field, raw_field in _CLAIM_ANNOTATION_PATHS:
+                    val = c.get(field)
+                    if isinstance(val, str):
+                        c[raw_field] = val
 
     votes = pack.get("cross_claim_votes")
     if isinstance(votes, list):
@@ -139,24 +140,25 @@ def _translate_pack(pack: Dict[str, Any]) -> List[Dict[str, Any]]:
                         "message": f"{field_path}: got {raw!r}, not a valid enum value",
                     })
 
-    claims = pack.get("claims")
-    if isinstance(claims, list):
-        for i, c in enumerate(claims):
-            if not isinstance(c, dict):
-                continue
-            raw = c.get("type")
-            if isinstance(raw, str):
-                field_path = "claims.type"
-                canonical, _raw_preserved, ok = translate_field(field_path, raw)
-                if ok:
-                    c["type"] = canonical
-                else:
-                    failures.append({
-                        "path": f"claims[{i}].type",
-                        "got": raw,
-                        "expected": build_error_enum_text(field_path),
-                        "message": f"claims[{i}].type: got {raw!r}, not a valid enum value",
-                    })
+    for list_key in ("pillar_claims", "questionable_claims"):
+        claims = pack.get(list_key)
+        if isinstance(claims, list):
+            for i, c in enumerate(claims):
+                if not isinstance(c, dict):
+                    continue
+                raw = c.get("type")
+                if isinstance(raw, str):
+                    field_path = "claims.type"
+                    canonical, _raw_preserved, ok = translate_field(field_path, raw)
+                    if ok:
+                        c["type"] = canonical
+                    else:
+                        failures.append({
+                            "path": f"{list_key}[{i}].type",
+                            "got": raw,
+                            "expected": build_error_enum_text(field_path),
+                            "message": f"{list_key}[{i}].type: got {raw!r}, not a valid enum value",
+                        })
 
     votes = pack.get("cross_claim_votes")
     if isinstance(votes, list):
@@ -293,7 +295,8 @@ def _build_repair_user_prompt(
 _RAW_SIBLING_MAP: Dict[str, str] = {
     "whole_article_judgment.classification": "whole_article_judgment.raw_classification_label",
     "whole_article_judgment.confidence": "whole_article_judgment.raw_confidence_label",
-    "claims.type": "claims.raw_type_label",
+    "pillar_claims.type": "pillar_claims.raw_type_label",
+    "questionable_claims.type": "questionable_claims.raw_type_label",
     "cross_claim_votes.vote": "cross_claim_votes.raw_vote_label",
     "cross_claim_votes.confidence": "cross_claim_votes.raw_confidence_label",
     "gsae_observation.classification_bucket": "gsae_observation.raw_classification_bucket_label",
@@ -397,10 +400,11 @@ def _nullify_allowed_fields(
             if full_path in allowed_paths:
                 waj[key] = SENTINEL
 
-    # Nested: claims[N].field — only sentinel the specific index allowed
-    claims = out.get("claims")
-    if isinstance(claims, list):
-        _nullify_indexed_list(claims, "claims", allowed_paths, SENTINEL)
+    # Nested: claim lists — sentinel specific index allowed
+    for list_key in ("pillar_claims", "questionable_claims"):
+        claims = out.get(list_key)
+        if isinstance(claims, list):
+            _nullify_indexed_list(claims, list_key, allowed_paths, SENTINEL)
 
     # Nested: cross_claim_votes[N].field
     votes = out.get("cross_claim_votes")

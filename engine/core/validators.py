@@ -1,41 +1,31 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/validators.py
-VERSION: 0.2.2
+VERSION: 0.3.0
 PURPOSE:
 Fail-closed validators for Survivor run_state and reviewer packs.
 
 CONTRACT:
-- Raise RuntimeError on any violation.
-- No warnings-only mode.
+- Fail-closed except for explicit policy clamps that truncate + emit _policy_warnings.
 - Key sets are imported from engine.core.schema_constants — do not hardcode them here.
 
-CHANGES IN v0.2:
-- (A) Key sets sourced from schema_constants; no inline hardcoding.
-- (B) "uncertain" classification requires uncertainty_basis + check_scope (no bypass).
-- (C) Deep enum validation: ArticleClassification, ClaimType, Vote, Confidence,
-      Integrity Scale (if present).
-- (D) EvidenceBank canonical schema enforced: quote, locator, source_id;
-      text==quote, char_len==len(quote), locator length consistency;
-      full reconstructibility if normalized_text present in run_state.
-- (E) near_duplicate_of references validated against claim registry (no dangling refs).
-- (fix) Symmetric authority rule: not_verifiable now also exempted alongside
-        not_checked_yet (AUTHORITY_SOURCES_EXEMPT_STATUSES).
-
-CHANGES IN v0.2.1:
-- reviewer non-empty check (reviewer.strip()).
-- Phantom EID guard: whitespace-only EIDs are ignored (strip before lookup);
-  error list normalized to stripped EIDs.
-- EvidenceBank bounds check: cs and ce <= len(normalized_text) before slicing.
-- cross_claim_votes: claim_id must be non-empty str.
-- _collect_eids: replaced recursive impl with iterative + 200k node cap.
+CHANGES IN v0.3.0 (Triage Model — PR1):
+- Replace single "claims" list with pillar_claims + questionable_claims +
+  background_claims_summary (triage architecture).
+- Legacy bridge in normalize_reviewer_pack(): claims → questionable_claims (COPY,
+  preserves "claims" key for adjudicator compat until PR2).
+- _validate_claims() → _validate_claim_list(claims, list_name) — parameterized.
+- New: _validate_background_claims_summary() — semi-strict (2 required ints).
+- New: _dedupe_claim_category_collision() — E5 trap, dedupe-to-pillar + warning.
+- Dual clamps: max_pillar_claims_per_reviewer + max_questionable_claims_per_reviewer.
+- Vote cleanup uses kept_ids = union(pillar_ids, questionable_ids).
+- validate_run() claim registry uses list_triage_claims().
 
 CHANGES IN v0.2.2:
 - whole_article_judgment.evidence_eids emptiness failure is now structured
   (path/expected/got + error_code=missing_whole_article_evidence) so Repair Gate can run.
 - Export normalize_reviewer_pack() (public) and keep _normalize_reviewer_pack alias for backwards compat.
 - validate_reviewer_pack now calls normalize_reviewer_pack().
-- Remove unused ReviewerPack import.
 """
 
 from __future__ import annotations
@@ -67,6 +57,7 @@ from engine.core.schema_constants import (
     VOTE_VALUES,
 )
 from engine.core.errors import ReviewerPackValidationError
+from engine.core.triage_utils import list_triage_claims
 
 
 def _require(
@@ -162,38 +153,116 @@ def _validate_whole_article_judgment(pack: Dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Claims validation
+# Claims validation (parameterized for pillar / questionable)
 # ---------------------------------------------------------------------------
 
 
-def _validate_claims(pack: Dict[str, Any]) -> None:
-    claims = pack.get("claims", [])
+def _validate_claim_list(claims: List[Any], list_name: str) -> None:
+    """Validate a list of Claim dicts. list_name is for error messages."""
     for i, claim in enumerate(claims):
-        _require(isinstance(claim, dict), f"claims[{i}] must be dict")
+        _require(isinstance(claim, dict), f"{list_name}[{i}] must be dict")
         _require(
             isinstance(claim.get("claim_id"), str) and claim["claim_id"].strip(),
-            f"claims[{i}].claim_id must be non-empty str",
+            f"{list_name}[{i}].claim_id must be non-empty str",
         )
         _require(
             isinstance(claim.get("text"), str) and claim["text"].strip(),
-            f"claims[{i}].text must be non-empty str",
+            f"{list_name}[{i}].text must be non-empty str",
         )
         _require(
             claim.get("type") in CLAIM_TYPES,
-            f"claims[{i}].type invalid: {claim.get('type')!r}",
-            path=f"claims[{i}].type",
+            f"{list_name}[{i}].type invalid: {claim.get('type')!r}",
+            path=f"{list_name}[{i}].type",
             expected=" | ".join(sorted(CLAIM_TYPES)),
             got=repr(claim.get("type")),
         )
         _require(
             _is_list_of_str(claim.get("evidence_eids")),
-            f"claims[{i}].evidence_eids must be list[str]",
+            f"{list_name}[{i}].evidence_eids must be list[str]",
         )
         centrality = claim.get("centrality")
         _require(
             isinstance(centrality, int) and centrality in (1, 2, 3),
-            f"claims[{i}].centrality must be 1, 2, or 3",
+            f"{list_name}[{i}].centrality must be 1, 2, or 3",
         )
+
+
+# ---------------------------------------------------------------------------
+# background_claims_summary validation (semi-strict: 2 required ints)
+# ---------------------------------------------------------------------------
+
+
+def _validate_background_claims_summary(pack: Dict[str, Any]) -> None:
+    bcs = pack.get("background_claims_summary")
+    _require(isinstance(bcs, dict), "background_claims_summary must be dict")
+
+    tce = bcs.get("total_claims_estimate")
+    ntc = bcs.get("not_triaged_count")
+
+    _require(
+        isinstance(tce, int) and tce >= 0,
+        "background_claims_summary.total_claims_estimate must be int >= 0",
+    )
+    _require(
+        isinstance(ntc, int) and ntc >= 0,
+        "background_claims_summary.not_triaged_count must be int >= 0",
+    )
+
+    samples = bcs.get("samples")
+    if samples is not None:
+        _require(
+            _is_list_of_str(samples),
+            "background_claims_summary.samples must be list[str] when present",
+        )
+
+
+# ---------------------------------------------------------------------------
+# E5: Category collision trap (dedupe-to-pillar + warning)
+# ---------------------------------------------------------------------------
+
+
+def _dedupe_claim_category_collision(pack: Dict[str, Any]) -> None:
+    """If a claim_id appears in both pillar_claims and questionable_claims,
+    keep it in pillar_claims and remove from questionable_claims.
+    Emits _policy_warnings entry."""
+    pillar = pack.get("pillar_claims")
+    questionable = pack.get("questionable_claims")
+    if not isinstance(pillar, list) or not isinstance(questionable, list):
+        return
+
+    pillar_ids: Set[str] = set()
+    for c in pillar:
+        if isinstance(c, dict):
+            cid = c.get("claim_id")
+            if isinstance(cid, str) and cid.strip():
+                pillar_ids.add(cid)
+
+    if not pillar_ids:
+        return
+
+    new_q: List[Any] = []
+    collisions: List[str] = []
+    for c in questionable:
+        if not isinstance(c, dict):
+            continue
+        cid = c.get("claim_id")
+        if isinstance(cid, str) and cid.strip() and cid in pillar_ids:
+            collisions.append(cid)
+            continue
+        new_q.append(c)
+
+    if collisions:
+        pack["questionable_claims"] = new_q
+        warnings = pack.setdefault("_policy_warnings", [])
+        warnings.append({
+            "code": "claim_category_collision_deduped",
+            "collision_count": len(collisions),
+            "collision_ids_sample": collisions[:10],
+            "message": (
+                "Same claim_id appeared in both pillar_claims and questionable_claims; "
+                "kept in pillar_claims and removed from questionable_claims."
+            ),
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +373,37 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
         "predictive_claim": "predictive",
     }
 
+    # --- Legacy bridge: claims → questionable_claims (COPY, keep claims for adjudicator) ---
+    if "claims" in pack and not any(
+        k in pack for k in ("pillar_claims", "questionable_claims", "background_claims_summary")
+    ):
+        legacy_claims = pack.get("claims")
+        if isinstance(legacy_claims, list):
+            pack["pillar_claims"] = []
+            pack["questionable_claims"] = list(legacy_claims)  # COPY, not move
+            triaged_count = sum(1 for c in legacy_claims if isinstance(c, dict))
+            pack["background_claims_summary"] = {
+                "total_claims_estimate": triaged_count,
+                "not_triaged_count": 0,
+            }
+            warnings = pack.setdefault("_policy_warnings", [])
+            warnings.append({
+                "code": "legacy_claims_field_used",
+                "message": (
+                    "Legacy pack used 'claims'. Bridged to triage schema "
+                    "as questionable_claims (audited set)."
+                ),
+            })
+
     # --- Centrality clamping (must be 1, 2, or 3) + claim type normalization ---
-    claims = pack.get("claims")
-    if isinstance(claims, list):
+    # Apply to both triage lists (and legacy claims if present)
+    _claim_lists_to_normalize = []
+    for key in ("pillar_claims", "questionable_claims", "claims"):
+        cl = pack.get(key)
+        if isinstance(cl, list):
+            _claim_lists_to_normalize.append(cl)
+
+    for claims in _claim_lists_to_normalize:
         for c in claims:
             if not isinstance(c, dict):
                 continue
@@ -396,9 +493,36 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
 _normalize_reviewer_pack = normalize_reviewer_pack
 
 
+def _clamp_claim_list(
+    pack: Dict[str, Any],
+    list_key: str,
+    max_count: int,
+    warning_code: str,
+) -> List[Any]:
+    """Truncate a claim list to max_count, emit _policy_warnings. Returns kept list."""
+    claims = pack.get(list_key)
+    _require(isinstance(claims, list), f"ReviewerPack.{list_key} must be list")
+    if len(claims) > max_count:
+        returned_count = len(claims)
+        pack[list_key] = claims[:max_count]
+        warnings = pack.setdefault("_policy_warnings", [])
+        warnings.append({
+            "code": warning_code,
+            "returned_count": returned_count,
+            "kept_count": max_count,
+            "dropped_count": returned_count - max_count,
+            "message": (
+                f"Reviewer returned {returned_count} {list_key}, exceeding "
+                f"cap={max_count}. Truncated to first {max_count}."
+            ),
+        })
+    return pack[list_key]
+
+
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:
     _require(isinstance(pack, dict), "ReviewerPack must be dict")
     normalize_reviewer_pack(pack)
+    _dedupe_claim_category_collision(pack)
 
     # (v0.2.1) reviewer must be a non-empty str
     reviewer = pack.get("reviewer")
@@ -421,14 +545,47 @@ def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None
         _validate_gsae_subject(pack["gsae_subject"])
 
     _validate_whole_article_judgment(pack)
-    _validate_claims(pack)
 
-    claims = pack.get("claims")
-    _require(isinstance(claims, list), "ReviewerPack.claims must be list")
-    _require(
-        len(claims) <= int(config["max_claims_per_reviewer"]),
-        "claims exceed max_claims_per_reviewer",
-    )
+    # Validate + clamp both triage claim lists
+    pillar = pack.get("pillar_claims", [])
+    questionable = pack.get("questionable_claims", [])
+    _validate_claim_list(pillar, "pillar_claims")
+    _validate_claim_list(questionable, "questionable_claims")
+    _validate_background_claims_summary(pack)
+
+    max_pillar = int(config.get("max_pillar_claims_per_reviewer", 15))
+    max_questionable = int(config.get("max_questionable_claims_per_reviewer", 30))
+
+    pillar = _clamp_claim_list(pack, "pillar_claims", max_pillar, "pillar_claims_truncated")
+    questionable = _clamp_claim_list(pack, "questionable_claims", max_questionable, "questionable_claims_truncated")
+
+    # Vote cleanup: kept_ids = union(pillar_ids, questionable_ids)
+    kept_ids: Set[str] = set()
+    for c in pillar:
+        if isinstance(c, dict):
+            cid = c.get("claim_id")
+            if isinstance(cid, str) and cid.strip():
+                kept_ids.add(cid)
+    for c in questionable:
+        if isinstance(c, dict):
+            cid = c.get("claim_id")
+            if isinstance(cid, str) and cid.strip():
+                kept_ids.add(cid)
+
+    votes = pack.get("cross_claim_votes")
+    if isinstance(votes, list):
+        filtered = []
+        for v in votes:
+            if not isinstance(v, dict):
+                continue
+            if v.get("claim_id") not in kept_ids:
+                continue
+            nd = v.get("near_duplicate_of")
+            if isinstance(nd, list):
+                v = dict(v)
+                v["near_duplicate_of"] = [x for x in nd if isinstance(x, str) and x in kept_ids]
+            filtered.append(v)
+        pack["cross_claim_votes"] = filtered
 
     _validate_cross_claim_votes(pack, config)
 
@@ -912,7 +1069,7 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
     claim_registry: Set[str] = set()
     for name in expected:
         pack = phase2[name]
-        for claim in pack.get("claims", []):
+        for claim in list_triage_claims(pack):
             cid = claim.get("claim_id")
             if isinstance(cid, str) and cid.strip():
                 claim_registry.add(cid)

@@ -40,6 +40,8 @@ from engine.core.schema_constants import (
 
 _CFG = {
     "max_claims_per_reviewer": 20,
+    "max_pillar_claims_per_reviewer": 15,
+    "max_questionable_claims_per_reviewer": 30,
     "max_near_duplicate_links": 3,
     "reviewers_enabled": ["openai", "gemini"],
     "confidence_weights": {"low": 0.5, "medium": 1.0, "high": 1.5},
@@ -77,12 +79,27 @@ def _make_claim(claim_id="openai-CL-01", text="A factual claim.", ctype="factual
     }
 
 
-def _make_pack(reviewer="openai", waj=None, claims=None, votes=None):
-    return {
+def _make_pack(
+    reviewer="openai",
+    waj=None,
+    claims=None,
+    votes=None,
+    *,
+    pillar_claims=None,
+    questionable_claims=None,
+    background_claims_summary=None,
+):
+    default_claims = [_make_claim()]
+    pack = {
         "reviewer": reviewer,
         "whole_article_judgment": waj or _make_waj(),
         "main_conclusion": {"text": "The article argues X."},
-        "claims": claims if claims is not None else [_make_claim()],
+        "pillar_claims": pillar_claims if pillar_claims is not None else default_claims,
+        "questionable_claims": questionable_claims if questionable_claims is not None else [],
+        "background_claims_summary": background_claims_summary or {
+            "total_claims_estimate": 1,
+            "not_triaged_count": 0,
+        },
         "scope_markers": [],
         "causal_links": [],
         "article_patterns": [],
@@ -93,6 +110,17 @@ def _make_pack(reviewer="openai", waj=None, claims=None, votes=None):
         "article_tickets": [],
         "cross_claim_votes": votes if votes is not None else [],
     }
+    # Legacy compat: if caller passes claims=, use legacy bridge path
+    if claims is not None:
+        pack.pop("pillar_claims")
+        pack.pop("questionable_claims")
+        pack.pop("background_claims_summary")
+        pack["claims"] = claims
+    # Also keep "claims" for adjudicator compat (PR1 TEMP)
+    elif "claims" not in pack:
+        all_claims = list(pack["pillar_claims"]) + list(pack["questionable_claims"])
+        pack["claims"] = all_claims
+    return pack
 
 
 def _make_run_state(packs=None, evidence_items=None, normalized_text=None):
@@ -101,7 +129,11 @@ def _make_run_state(packs=None, evidence_items=None, normalized_text=None):
         "evidence_bank": {"items": items},
         "phase2": packs or {
             "openai": _make_pack("openai"),
-            "gemini": _make_pack("gemini", claims=[_make_claim("gemini-CL-01")]),
+            "gemini": _make_pack(
+                "gemini",
+                pillar_claims=[_make_claim("gemini-CL-01")],
+                questionable_claims=[],
+            ),
         },
     }
     if normalized_text is not None:
@@ -307,15 +339,15 @@ def test_invalid_waj_confidence_raises():
 
 def test_unknown_claim_type_normalized_to_factual():
     claim = _make_claim(ctype="speculative")
-    pack = _make_pack(claims=[claim])
+    pack = _make_pack(pillar_claims=[claim], questionable_claims=[])
     validate_reviewer_pack(pack, _CFG)  # must not raise — normalizer maps to factual
-    assert pack["claims"][0]["type"] == "factual"
+    assert pack["pillar_claims"][0]["type"] == "factual"
 
 
 def test_all_valid_claim_types_accepted():
     for ctype in CLAIM_TYPES:
         claim = _make_claim(ctype=ctype)
-        pack = _make_pack(claims=[claim])
+        pack = _make_pack(pillar_claims=[claim], questionable_claims=[])
         validate_reviewer_pack(pack, _CFG)  # must not raise
 
 
@@ -483,22 +515,37 @@ def test_near_duplicate_ref_valid_passes():
     run = _make_run_state(
         packs={
             "openai": _make_pack("openai", votes=votes),
-            "gemini": _make_pack("gemini", claims=[_make_claim("gemini-CL-01")]),
+            "gemini": _make_pack(
+                "gemini",
+                pillar_claims=[_make_claim("gemini-CL-01")],
+                questionable_claims=[],
+            ),
         }
     )
     validate_run(run, _CFG)  # must not raise
 
 
 def test_near_duplicate_ref_dangling_raises():
-    votes = [{"claim_id": "openai-CL-01", "near_duplicate_of": ["GHOST-CL-99"]}]
-    run = _make_run_state(
-        packs={
-            "openai": _make_pack("openai", votes=votes),
-            "gemini": _make_pack("gemini", claims=[_make_claim("gemini-CL-01")]),
-        }
-    )
+    """Dangling near_duplicate_of refs that survive per-pack vote cleanup are caught by validate_run.
+
+    Per-pack vote cleanup only filters against kept_ids within the same pack.
+    A ref to a claim_id from another reviewer that exists locally (passes vote cleanup)
+    but doesn't exist globally would be caught — but in practice this is rare.
+
+    Instead, test the _validate_near_duplicate_refs function directly via a
+    hand-crafted run_state where the votes bypass per-pack cleanup.
+    """
+    from engine.core.validators import _validate_near_duplicate_refs
+    phase2 = {
+        "openai": {
+            "cross_claim_votes": [
+                {"claim_id": "openai-CL-01", "near_duplicate_of": ["GHOST-CL-99"]},
+            ],
+        },
+    }
+    claim_registry = {"openai-CL-01", "gemini-CL-01"}
     with pytest.raises(RuntimeError, match="dangling reference"):
-        validate_run(run, _CFG)
+        _validate_near_duplicate_refs(phase2, claim_registry)
 
 
 # ---------------------------------------------------------------------------
@@ -566,11 +613,18 @@ def test_conflicted_sources_requires_nonempty_authority_sources():
 
 def test_phantom_eid_raises():
     """EID referenced in phase2 but absent from EvidenceBank must raise."""
-    claims = [_make_claim(eids=["E99"])]  # E99 does not exist
     run = _make_run_state(
         packs={
-            "openai": _make_pack("openai", claims=claims),
-            "gemini": _make_pack("gemini", claims=[_make_claim("gemini-CL-01", eids=["E1"])]),
+            "openai": _make_pack(
+                "openai",
+                pillar_claims=[_make_claim(eids=["E99"])],
+                questionable_claims=[],
+            ),
+            "gemini": _make_pack(
+                "gemini",
+                pillar_claims=[_make_claim("gemini-CL-01", eids=["E1"])],
+                questionable_claims=[],
+            ),
         }
     )
     with pytest.raises(RuntimeError, match="EID integrity failure"):
@@ -580,3 +634,145 @@ def test_phantom_eid_raises():
 def test_valid_run_passes():
     run = _make_run_state()
     validate_run(run, _CFG)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Triage model: pillar/questionable clamp + vote cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_pillar_claims_truncated_when_exceeds_cap():
+    """20 pillar claims with cap=15 → truncated, warning emitted."""
+    claims = [_make_claim(claim_id=f"CL-{i:02d}") for i in range(20)]
+    pack = _make_pack(pillar_claims=claims, questionable_claims=[])
+    validate_reviewer_pack(pack, _CFG)
+    assert len(pack["pillar_claims"]) == 15
+    warnings = pack.get("_policy_warnings", [])
+    codes = [w["code"] for w in warnings]
+    assert "pillar_claims_truncated" in codes
+
+
+def test_questionable_claims_truncated_when_exceeds_cap():
+    """35 questionable claims with cap=30 → truncated, warning emitted."""
+    claims = [_make_claim(claim_id=f"CL-{i:02d}") for i in range(35)]
+    pack = _make_pack(pillar_claims=[], questionable_claims=claims)
+    validate_reviewer_pack(pack, _CFG)
+    assert len(pack["questionable_claims"]) == 30
+    warnings = pack.get("_policy_warnings", [])
+    codes = [w["code"] for w in warnings]
+    assert "questionable_claims_truncated" in codes
+
+
+def test_vote_cleanup_after_truncation():
+    """Votes referencing truncated claim_ids are dropped; near_duplicate_of cleaned."""
+    # Claims: CL-00..CL-19 (pillar), CL-15 will be truncated
+    pillar = [_make_claim(claim_id=f"CL-{i:02d}") for i in range(20)]
+    votes = [
+        {"claim_id": "CL-00", "vote": "supported", "confidence": "high",
+         "near_duplicate_of": ["CL-16"]},  # CL-16 will be truncated
+        {"claim_id": "CL-16", "vote": "supported", "confidence": "high"},  # will be dropped
+    ]
+    pack = _make_pack(pillar_claims=pillar, questionable_claims=[], votes=votes)
+    validate_reviewer_pack(pack, _CFG)
+    remaining_votes = pack["cross_claim_votes"]
+    assert len(remaining_votes) == 1
+    assert remaining_votes[0]["claim_id"] == "CL-00"
+    assert remaining_votes[0]["near_duplicate_of"] == []
+
+
+# ---------------------------------------------------------------------------
+# Legacy bridge: claims → questionable_claims
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_bridge_converts_claims_to_questionable():
+    """Pack with only 'claims' key → bridged to questionable_claims + warning."""
+    legacy_pack = _make_pack(claims=[_make_claim()])
+    validate_reviewer_pack(legacy_pack, _CFG)
+    assert legacy_pack["questionable_claims"] == [_make_claim()]
+    assert legacy_pack["pillar_claims"] == []
+    warnings = legacy_pack.get("_policy_warnings", [])
+    codes = [w["code"] for w in warnings]
+    assert "legacy_claims_field_used" in codes
+
+
+def test_legacy_bridge_preserves_claims_key():
+    """Legacy bridge must COPY, not move — claims key remains for adjudicator compat."""
+    legacy_pack = _make_pack(claims=[_make_claim()])
+    validate_reviewer_pack(legacy_pack, _CFG)
+    assert "claims" in legacy_pack
+
+
+def test_legacy_bridge_synthesizes_background_summary():
+    """Legacy bridge must create background_claims_summary with correct counts."""
+    claims = [_make_claim(claim_id=f"CL-{i}") for i in range(5)]
+    legacy_pack = _make_pack(claims=claims)
+    validate_reviewer_pack(legacy_pack, _CFG)
+    bcs = legacy_pack["background_claims_summary"]
+    assert bcs["total_claims_estimate"] == 5
+    assert bcs["not_triaged_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# E5: Category collision trap
+# ---------------------------------------------------------------------------
+
+
+def test_e5_collision_dedupes_to_pillar():
+    """Same claim_id in both lists → kept in pillar, removed from questionable."""
+    shared_claim = _make_claim(claim_id="SHARED-01")
+    unique_q = _make_claim(claim_id="Q-ONLY-01")
+    pack = _make_pack(
+        pillar_claims=[shared_claim],
+        questionable_claims=[dict(shared_claim), unique_q],
+    )
+    validate_reviewer_pack(pack, _CFG)
+    q_ids = [c["claim_id"] for c in pack["questionable_claims"]]
+    assert "SHARED-01" not in q_ids
+    assert "Q-ONLY-01" in q_ids
+    warnings = pack.get("_policy_warnings", [])
+    codes = [w["code"] for w in warnings]
+    assert "claim_category_collision_deduped" in codes
+
+
+# ---------------------------------------------------------------------------
+# background_claims_summary validation
+# ---------------------------------------------------------------------------
+
+
+def test_background_summary_missing_not_triaged_count_raises():
+    pack = _make_pack(
+        background_claims_summary={"total_claims_estimate": 10},
+    )
+    with pytest.raises(RuntimeError, match="not_triaged_count"):
+        validate_reviewer_pack(pack, _CFG)
+
+
+def test_background_summary_valid_passes():
+    pack = _make_pack(
+        background_claims_summary={"total_claims_estimate": 10, "not_triaged_count": 5},
+    )
+    validate_reviewer_pack(pack, _CFG)  # must not raise
+
+
+def test_background_summary_with_samples_passes():
+    pack = _make_pack(
+        background_claims_summary={
+            "total_claims_estimate": 10,
+            "not_triaged_count": 5,
+            "samples": ["Claim A", "Claim B"],
+        },
+    )
+    validate_reviewer_pack(pack, _CFG)  # must not raise
+
+
+def test_background_summary_invalid_samples_raises():
+    pack = _make_pack(
+        background_claims_summary={
+            "total_claims_estimate": 10,
+            "not_triaged_count": 5,
+            "samples": [123],  # not list[str]
+        },
+    )
+    with pytest.raises(RuntimeError, match="samples must be list"):
+        validate_reviewer_pack(pack, _CFG)

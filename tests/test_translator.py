@@ -29,6 +29,8 @@ from engine.core.translation_rules import (
 
 _CFG = {
     "max_claims_per_reviewer": 20,
+    "max_pillar_claims_per_reviewer": 15,
+    "max_questionable_claims_per_reviewer": 30,
     "max_near_duplicate_links": 3,
     "reviewers_enabled": ["openai", "gemini"],
     "confidence_weights": {"low": 0.5, "medium": 1.0, "high": 1.5},

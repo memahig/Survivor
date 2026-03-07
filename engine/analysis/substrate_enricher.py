@@ -96,6 +96,11 @@ def enrich_substrate(
     7. ranked_omissions (needs load_bearing output)
     8. reads_like (needs all above)
     9. priority_signals (needs all above)
+    10. reader_interpretation (needs all above)
+    11. peg_profile (post-interpretation consumer; does not perform signal detection)
+
+    PEG is a qualitative post-interpretation profile builder and does not
+    perform signal detection.
 
     Returns dict with run_state keys passed through + derived analysis keys.
     """
@@ -220,11 +225,18 @@ def enrich_substrate(
     except Exception as e:
         enriched["priority_signals"] = {"error": str(e)}
 
-    # ---- Module 9: Reader interpretation (needs all above) ----
+    # ---- Module 10: Reader interpretation (needs all above) ----
     try:
         from engine.analysis.reader_interpretation import interpret_for_reader
         enriched["reader_interpretation"] = interpret_for_reader(enriched)
     except Exception as e:
         enriched["reader_interpretation"] = {"error": str(e)}
+
+    # ---- Module 11: PEG profile (post-interpretation consumer) ----
+    try:
+        from engine.analysis.peg import build_peg_profile
+        enriched["peg_profile"] = build_peg_profile(enriched)
+    except Exception as e:
+        enriched["peg_profile"] = {"error": str(e)}
 
     return enriched

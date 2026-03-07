@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """
 FILE: engine/core/validators.py
-VERSION: 0.4.0
+VERSION: 0.5.0
 PURPOSE:
 Fail-closed validators for Survivor run_state and reviewer packs.
 
 CONTRACT:
 - Fail-closed except for explicit policy clamps that truncate + emit _policy_warnings.
 - Key sets are imported from engine.core.schema_constants — do not hardcode them here.
+
+CHANGES IN v0.5.0:
+- Layer 7 EID sanitization strips phantom evidence_eids before global integrity check.
+- validate_run injects config["_available_eids"] so normalize_reviewer_pack can sanitize phase2 packs.
+- PEG-related stabilization cycle completed in tests:
+  phantom EID behavior updated from raise -> strip.
+- Minor grammar fix in reader_interpretation pluralization ("was/were").
 
 CHANGES IN v0.4.0 (Triage Model — PR2):
 - Removed legacy bridge (claims → questionable_claims copy). All packs must now use
@@ -32,7 +39,7 @@ CHANGES IN v0.2.2:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 from engine.core.schema_constants import (
     ARTICLE_CLASSIFICATIONS,
@@ -317,8 +324,14 @@ def _validate_cross_claim_votes(pack: Dict[str, Any], config: Dict[str, Any]) ->
 # ---------------------------------------------------------------------------
 
 
-def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
+def normalize_reviewer_pack(
+    pack: Dict[str, Any],
+    available_eids: Optional[Set[str]] = None,
+) -> None:
     """Semantic normalizer — drift firewall for LLM enum outputs.
+
+    Layers 1-6: synonym mapping, centrality clamping, GSAE normalization.
+    Layer 7: EID sanitization — strips evidence_eids not in available_eids.
 
     Idempotent: safe to call multiple times on the same pack.
     Called by the translator BEFORE lossless translation so that synonym
@@ -529,6 +542,25 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                         ),
                     })
 
+    # --- Layer 7: Evidence EID sanitization ---
+    if available_eids is not None:
+        def _filter_eids(lst):
+            if not isinstance(lst, list):
+                return lst
+            return [eid for eid in lst if isinstance(eid, str) and eid in available_eids]
+
+        # whole_article_judgment
+        waj = pack.get("whole_article_judgment")
+        if isinstance(waj, dict):
+            waj["evidence_eids"] = _filter_eids(waj.get("evidence_eids"))
+
+        # claims
+        for key in ("pillar_claims", "questionable_claims"):
+            claims = pack.get(key)
+            if isinstance(claims, list):
+                for c in claims:
+                    if isinstance(c, dict):
+                        c["evidence_eids"] = _filter_eids(c.get("evidence_eids"))
 
 
 def _clamp_claim_list(
@@ -559,7 +591,9 @@ def _clamp_claim_list(
 
 def validate_reviewer_pack(pack: Dict[str, Any], config: Dict[str, Any]) -> None:
     _require(isinstance(pack, dict), "ReviewerPack must be dict")
-    normalize_reviewer_pack(pack)
+    raw_available_eids = config.get("_available_eids")
+    available_eids = raw_available_eids if isinstance(raw_available_eids, set) else None
+    normalize_reviewer_pack(pack, available_eids)
     _dedupe_claim_category_collision(pack)
 
     # (v0.2.1) reviewer must be a non-empty str
@@ -899,6 +933,25 @@ def _collect_eids(obj: Any, out: List[str], *, max_nodes: int = 200_000) -> None
                     for eid in v:
                         if isinstance(eid, str):
                             out.append(eid)
+                else:
+                    stack.append(v)
+        elif isinstance(cur, list):
+            stack.extend(cur)
+
+
+def _strip_bad_eids(obj: Any, valid_eids: Set[str]) -> None:
+    """In-place strip of evidence_eids not in valid_eids from any nested dict.
+
+    Safety net for the adjudicated dict, which is built from phase2 data
+    before validate_run() has a chance to sanitize it.
+    """
+    stack = [obj]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                if k == "evidence_eids" and isinstance(v, list):
+                    cur[k] = [eid for eid in v if isinstance(eid, str) and eid in valid_eids]
                 else:
                     stack.append(v)
         elif isinstance(cur, list):
@@ -1325,16 +1378,9 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
     valid_eids = {it.get("eid") for it in items if isinstance(it, dict) and it.get("eid")}
     _require(len(valid_eids) > 0, "EvidenceBank has no valid eids")
 
-    referenced: List[str] = []
-    _collect_eids(run_state.get("phase2", {}), referenced)
-    _collect_eids(run_state.get("adjudicated", {}), referenced)
-
-    bad = sorted({
-        eid.strip() for eid in referenced
-        if isinstance(eid, str) and eid.strip() and eid.strip() not in valid_eids
-    })
-    if bad:
-        raise RuntimeError(f"EID integrity failure: referenced but not in EvidenceBank: {bad}")
+    # Inject canonical EIDs so validate_reviewer_pack → normalize_reviewer_pack
+    # can strip hallucinated EIDs before the global integrity check.
+    config["_available_eids"] = valid_eids
 
     normalized_text: str | None = run_state.get("normalized_text")
     _validate_evidence_bank_items(items, normalized_text)
@@ -1350,9 +1396,25 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
         _require(isinstance(x, str) and x.strip(), "config.reviewers_enabled entries must be non-empty strings")
         expected.append(x.strip())
 
+    # Per-reviewer normalization (includes Layer 7 EID sanitization) BEFORE global check.
     for name in expected:
         _require(name in phase2, f"phase2 missing reviewer output: {name}")
         validate_reviewer_pack(phase2[name], config)
+
+    # Safety-net: strip bad EIDs from adjudicated dict (built before validate_run runs).
+    _strip_bad_eids(run_state.get("adjudicated", {}), valid_eids)
+
+    # Global EID integrity check — now runs AFTER sanitization.
+    referenced: List[str] = []
+    _collect_eids(run_state.get("phase2", {}), referenced)
+    _collect_eids(run_state.get("adjudicated", {}), referenced)
+
+    bad = sorted({
+        eid.strip() for eid in referenced
+        if isinstance(eid, str) and eid.strip() and eid.strip() not in valid_eids
+    })
+    if bad:
+        raise RuntimeError(f"EID integrity failure: referenced but not in EvidenceBank: {bad}")
 
     claim_registry: Set[str] = set()
     for name in expected:

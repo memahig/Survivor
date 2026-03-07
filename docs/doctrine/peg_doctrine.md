@@ -1,15 +1,15 @@
 # PEG Doctrine
 
-**Persuasion-Evidence Gap**
+**Persuasion–Evidence Gap**
 
-**Status:** Structural Analysis Doctrine
+**Status:** Structural Analysis Doctrine (v1.1)
 **Subordinate to:** BiasLens Constitution
 
 ---
 
 ## Core Principle
 
-The Persuasion-Evidence Gap (PEG) exists when the persuasive force of an argument exceeds the evidentiary support presented for its claims.
+The Persuasion–Evidence Gap (PEG) exists when the persuasive force of an argument exceeds the evidentiary support presented for its claims.
 
 Persuasive signals increase reader confidence.
 Evidence determines whether that confidence is justified.
@@ -29,6 +29,8 @@ Persuasion signals amplify reader confidence independent of evidence.
 
 BiasLens recognizes multiple tiers.
 
+---
+
 ### Surface Signals
 
 Common rhetorical amplifiers.
@@ -40,6 +42,11 @@ Examples:
 - existential framing
 - sweeping generalizations
 
+Surface signals are common rhetorical devices and are not inherently problematic.
+They become significant when combined with weak evidentiary grounding.
+
+---
+
 ### Structural Signals
 
 Persuasive mechanisms embedded in argument structure.
@@ -50,6 +57,8 @@ Examples:
 - unsupported causal narratives
 - scope inflation
 - load-bearing weak claims
+
+---
 
 ### Elite Persuasion Signals
 
@@ -66,7 +75,9 @@ Examples:
 
 ## Evidence Grounding
 
-Evidence strength reflects how strongly claims are supported by verifiable information.
+Evidence strength reflects how strongly claims are supported by verifiable information and disciplined reasoning.
+
+---
 
 ### Surface Evidence
 
@@ -76,6 +87,10 @@ Basic evidence indicators:
 - references
 - source attribution
 
+Presence alone does not guarantee strength.
+
+---
+
 ### Structural Evidence
 
 Indicators of disciplined reasoning:
@@ -84,6 +99,9 @@ Indicators of disciplined reasoning:
 - demonstrated causal chains
 - proportional claim scope
 - comparative analysis
+- comparative baselines for superlative claims
+
+---
 
 ### Deep Evidence
 
@@ -100,13 +118,15 @@ Signals of high epistemic rigor:
 
 PEG is not an average measure.
 
-BiasLens evaluates persuasion-evidence mismatch with special attention to an argument's load-bearing center.
+BiasLens evaluates persuasion–evidence mismatch with special attention to an argument's load-bearing center.
 
-Evidence supporting peripheral claims does not offset a persuasion-evidence gap in the claims carrying the argument's central conclusion.
+Evidence supporting peripheral claims does not offset a persuasion–evidence gap in the claims carrying the argument's central conclusion.
 
 An argument may therefore contain substantial factual content while still exhibiting a severe PEG at its structural core.
 
-### Fragility Sensitivity Principle
+---
+
+## Fragility Sensitivity Principle
 
 PEG evaluation is sensitive to argument fragility.
 
@@ -175,8 +195,20 @@ No analytical authority is exempt from structural scrutiny.
 
 ---
 
+## Rendering Philosophy
+
+PEG rendering follows these principles:
+
+- Describe mechanisms, not the object.
+- Do not label a text as propaganda.
+- Use severity-based wording to describe elements commonly used in propaganda-style persuasion.
+- Keep PEG separate from future Epistemic Success signals.
+- PEG is a structural gap detector, not a truth detector.
+
+---
+
 ## Canonical Summary
 
-The Persuasion-Evidence Gap exists when:
+The Persuasion–Evidence Gap exists when:
 
 The confidence a text asks from the reader exceeds the confidence its evidence can justify.

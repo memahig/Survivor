@@ -360,6 +360,8 @@ ARTICLE (normalized text):
         "omission_candidates", "counterfactual_requirements",
         "claim_omissions", "article_omissions", "framing_omissions",
         "argument_summary", "object_discipline_check",
+        "rival_narratives",
+        "argument_integrity",
     })
 
     def run_triage(self, inp: ReviewerInputs) -> Dict[str, Any]:

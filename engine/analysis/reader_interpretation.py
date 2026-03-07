@@ -463,7 +463,7 @@ def _synthesize_bottom_line(
         if rejected > 0:
             parts.append(
                 f"{supported} of {total} core claims are supported; "
-                f"{rejected} were rejected by the review process."
+                f"{rejected} {'was' if rejected == 1 else 'were'} rejected by the review process."
             )
         else:
             parts.append(f"{supported} of {total} core claims are supported.")

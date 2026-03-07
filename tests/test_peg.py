@@ -103,13 +103,13 @@ class TestNotable:
 
     def test_notable_peg_line(self):
         result = build_peg_profile(_enriched(["unsupported_causal"]))
-        assert "propaganda-style patterns" in result["peg_line"]
+        assert "includes some elements sometimes used in propaganda-style persuasion" in result["peg_line"]
 
     def test_notable_does_not_overclaim(self):
         result = build_peg_profile(_enriched(["omission_dependence"]))
         assert result["peg_level"] == "notable"
-        assert "has the structure of propaganda" not in result["peg_line"]
-        assert "uses some propaganda-style argument techniques" not in result["peg_line"]
+        assert "heavily relies" not in result["peg_line"]
+        assert "relies on several" not in result["peg_line"]
 
     def test_secondary_only_no_fragility(self):
         result = build_peg_profile(_enriched(["official_reliance", "baseline_absence"]))
@@ -136,7 +136,7 @@ class TestSevere:
 
     def test_two_core_with_high_fragility(self):
         result = build_peg_profile(
-            _enriched(["omission_dependence", "unsupported_causal"], fragility="elevated")
+            _enriched(["omission_dependence", "unsupported_causal"], fragility="high")
         )
         assert result["peg_level"] == "severe"
 
@@ -150,14 +150,15 @@ class TestSevere:
         result = build_peg_profile(
             _enriched(["omission_dependence", "load_bearing_weakness"])
         )
-        assert "propaganda-style argument techniques" in result["peg_line"]
+        assert "relies on several elements often used in propaganda-style persuasion" in result["peg_line"]
+        assert "increase persuasive force beyond what the evidence fully supports" in result["peg_line"]
 
     def test_severe_line_uses_relies_on(self):
         result = build_peg_profile(
             _enriched(["omission_dependence", "unsupported_causal"], fragility="high")
         )
         assert result["peg_level"] == "severe"
-        assert "The argument relies on" in result["peg_line"]
+        assert "This argument relies on" in result["peg_line"]
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +190,8 @@ class TestCritical:
                 "omission_dependence", "unsupported_causal", "load_bearing_weakness"
             ], fragility="high")
         )
-        assert "structure of propaganda" in result["peg_line"]
+        assert "heavily relies on elements commonly used in propaganda-style persuasion" in result["peg_line"]
+        assert "depends more on persuasive structure than on fully demonstrated evidence" in result["peg_line"]
         assert "omitted rival explanations" in result["peg_line"]
 
     def test_critical_line_max_3_mechanisms(self):

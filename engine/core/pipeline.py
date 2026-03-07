@@ -32,6 +32,7 @@ from engine.core.normalize import normalize_text
 from engine.core.evidence_bank import build_evidence_bank
 from engine.core.adjudicator import adjudicate
 from engine.core.errors import ReviewerPackCompileError
+from engine.reviewers.errors import classify_error
 from engine.core.translator import compile_reviewer_pack
 from engine.core.spine_builder import build_argument_spine
 from engine.core.validators import validate_run
@@ -157,7 +158,25 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
 
     reviewers = _build_reviewers_from_config(config)
     reviewer_names = [r.name for r in reviewers]
+    min_reviewers = int(config.get("min_reviewers_required", 2))
     _write_status(outdir, "reviewers_built", f"reviewers: {reviewer_names}")
+
+    reviewer_status: Dict[str, Dict[str, Any]] = {}
+
+    def _classify_error_type(e: Exception) -> str:
+        """Classify error using shared reviewer error module."""
+        return classify_error(e).value
+
+    def _check_min_reviewers(
+        stage: str, successful: Dict[str, Any], total: int,
+    ) -> None:
+        if len(successful) < min_reviewers:
+            raise RuntimeError(
+                f"Insufficient reviewers at {stage}: "
+                f"{len(successful)}/{total} available, "
+                f"minimum required is {min_reviewers}. "
+                f"reviewer_status={reviewer_status}"
+            )
 
     # ---------------------------
     # Phase 1, Pass 1: Skeletal Triage
@@ -174,9 +193,9 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             evidence_bank=evidence_bank,
             config=config,
         )
-        raw_triage = reviewer.run_triage(inp)
-        _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} compiling")
         try:
+            raw_triage = reviewer.run_triage(inp)
+            _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} compiling")
             compiled = compile_reviewer_pack(
                 reviewer_id=reviewer.name,
                 raw_pack=raw_triage,
@@ -184,14 +203,30 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 config=config,
                 available_eids=available_eids,
             )
-        except ReviewerPackCompileError as e:
-            _write_compile_error_report(e, outdir)
-            raise RuntimeError(
-                f"Reviewer '{reviewer.name}' failed triage compilation "
-                f"after {e.attempt} attempts"
-            ) from e
-        triage_outputs[reviewer.name] = compiled
-        _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} done")
+            triage_outputs[reviewer.name] = compiled
+            reviewer_status[reviewer.name] = {
+                "status": "ok",
+                "error_type": None,
+                "message": None,
+            }
+            _write_status(outdir, "phase1_triage", f"reviewer={reviewer.name} done")
+        except Exception as e:
+            msg = str(e)
+            error_type = _classify_error_type(e)
+            reviewer_status[reviewer.name] = {
+                "status": "failed",
+                "error_type": error_type,
+                "message": msg,
+            }
+            print(
+                f"[pipeline] reviewer '{reviewer.name}' failed triage "
+                f"({error_type}): {msg}",
+                file=sys.stderr,
+            )
+            if isinstance(e, ReviewerPackCompileError):
+                _write_compile_error_report(e, outdir)
+
+    _check_min_reviewers("phase1_triage", triage_outputs, len(reviewers))
 
     # ---------------------------
     # Build cross-reviewer argument spine
@@ -214,7 +249,10 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
 
     phase1_outputs: Dict[str, Any] = {}
 
-    for reviewer in reviewers:
+    # Only enrich reviewers that passed triage
+    active_reviewers = [r for r in reviewers if r.name in triage_outputs]
+
+    for reviewer in active_reviewers:
         _write_status(outdir, "phase1_enrichment", f"reviewer={reviewer.name} started")
         inp = ReviewerInputs(
             article_id=article["id"],
@@ -224,16 +262,36 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             evidence_bank=evidence_bank,
             config=config,
         )
-        enrichment = reviewer.run_enrichment(inp, spine)
+        try:
+            enrichment = reviewer.run_enrichment(inp, spine)
 
-        # Merge enrichment into triage pack
-        merged = dict(triage_outputs[reviewer.name])
-        for k, v in enrichment.items():
-            if k in _ENRICHMENT_KEYS:
-                merged[k] = v
+            # Merge enrichment into triage pack
+            merged = dict(triage_outputs[reviewer.name])
+            for k, v in enrichment.items():
+                if k in _ENRICHMENT_KEYS:
+                    merged[k] = v
 
-        phase1_outputs[reviewer.name] = merged
-        _write_status(outdir, "phase1_enrichment", f"reviewer={reviewer.name} done")
+            phase1_outputs[reviewer.name] = merged
+            _write_status(outdir, "phase1_enrichment", f"reviewer={reviewer.name} done")
+        except Exception as e:
+            msg = str(e)
+            error_type = _classify_error_type(e)
+            reviewer_status[reviewer.name] = {
+                "status": "degraded",
+                "error_type": error_type,
+                "message": msg,
+                "stage": "phase1_enrichment",
+                "fallback": "triage_only",
+            }
+            print(
+                f"[pipeline] reviewer '{reviewer.name}' degraded at enrichment "
+                f"({error_type}), falling back to triage-only: {msg}",
+                file=sys.stderr,
+            )
+            # Fall back to triage-only pack (no enrichment data)
+            phase1_outputs[reviewer.name] = dict(triage_outputs[reviewer.name])
+
+    _check_min_reviewers("phase1_enrichment", phase1_outputs, len(reviewers))
 
     # ---------------------------
     # Cross-review payload
@@ -248,7 +306,10 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     # ---------------------------
     phase2_outputs: Dict[str, Any] = {}
 
-    for reviewer in reviewers:
+    # Only run Phase 2 for reviewers that completed Phase 1
+    phase2_reviewers = [r for r in reviewers if r.name in phase1_outputs]
+
+    for reviewer in phase2_reviewers:
         _write_status(outdir, "phase2", f"reviewer={reviewer.name} started")
         inp = ReviewerInputs(
             article_id=article["id"],
@@ -258,9 +319,9 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
             evidence_bank=evidence_bank,
             config=config,
         )
-        raw_pack = reviewer.run_phase2(inp, cross_payload)
-        _write_status(outdir, "phase2", f"reviewer={reviewer.name} compiling")
         try:
+            raw_pack = reviewer.run_phase2(inp, cross_payload)
+            _write_status(outdir, "phase2", f"reviewer={reviewer.name} compiling")
             compiled = compile_reviewer_pack(
                 reviewer_id=reviewer.name,
                 raw_pack=raw_pack,
@@ -268,14 +329,28 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
                 config=config,
                 available_eids=available_eids,
             )
-        except ReviewerPackCompileError as e:
-            _write_compile_error_report(e, outdir)
-            raise RuntimeError(
-                f"Reviewer '{reviewer.name}' failed Phase 2 compilation "
-                f"after {e.attempt} attempts"
-            ) from e
-        phase2_outputs[reviewer.name] = compiled
-        _write_status(outdir, "phase2", f"reviewer={reviewer.name} done")
+            phase2_outputs[reviewer.name] = compiled
+            _write_status(outdir, "phase2", f"reviewer={reviewer.name} done")
+        except Exception as e:
+            msg = str(e)
+            error_type = _classify_error_type(e)
+            prior = reviewer_status.get(reviewer.name, {})
+            reviewer_status[reviewer.name] = {
+                "status": "failed",
+                "error_type": error_type,
+                "message": msg,
+                "stage": "phase2",
+                "previous_status": prior.get("status"),
+            }
+            print(
+                f"[pipeline] reviewer '{reviewer.name}' failed Phase 2 "
+                f"({error_type}): {msg}",
+                file=sys.stderr,
+            )
+            if isinstance(e, ReviewerPackCompileError):
+                _write_compile_error_report(e, outdir)
+
+    _check_min_reviewers("phase2", phase2_outputs, len(reviewers))
 
     # Optional debug artifact (single write, after loop)
     with open(os.path.join(outdir, "phase2_outputs.json"), "w") as f:
@@ -306,6 +381,7 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
         "phase1": phase1_outputs,
         "phase2": phase2_outputs,
         "adjudicated": adjudicated,
+        "reviewer_status": reviewer_status,
     }
 
     if gsae_block is not None:

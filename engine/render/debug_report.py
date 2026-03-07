@@ -31,6 +31,32 @@ def render_debug(run_state: Dict[str, Any], config: Dict[str, Any]) -> str:
     lines.append(f"- max_near_duplicate_links: {config.get('max_near_duplicate_links')}\n")
     lines.append(f"- decision_margin: {config.get('decision_margin')}\n")
 
+    # Reviewer participation
+    reviewer_status = run_state.get("reviewer_status", {})
+    lines.append(f"- min_reviewers_required: {config.get('min_reviewers_required')}\n")
+    lines.append(f"\n## Reviewer Participation\n")
+    if reviewer_status:
+        for name, info in reviewer_status.items():
+            status = info.get("status", "unknown")
+            error_type = info.get("error_type")
+            stage = info.get("stage", "")
+            fallback = info.get("fallback", "")
+            prev = info.get("previous_status", "")
+            detail_parts = []
+            if error_type:
+                detail_parts.append(error_type)
+            if stage:
+                detail_parts.append(f"stage={stage}")
+            if fallback:
+                detail_parts.append(f"fallback={fallback}")
+            if prev:
+                detail_parts.append(f"previous={prev}")
+            detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+            lines.append(f"- **{name}**: {status}{detail}\n")
+    else:
+        for name in phase1.keys():
+            lines.append(f"- **{name}**: ok\n")
+
     lines.append("\n## EvidenceBank\n")
     lines.append(f"- used_chars: {ev.get('used_chars')}\n")
     items = ev.get("items", [])

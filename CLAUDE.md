@@ -1,5 +1,17 @@
 # CLAUDE.md — Project Instructions for Claude Code
 
+## Documentation Hierarchy
+
+Project governance follows this precedence order:
+
+1. **Constitution** — system governing rules and invariants
+2. **Architecture** — system structure and module responsibilities
+3. **Manifesto** — philosophy and epistemic doctrine
+4. **Implementation specifications** — renderer contracts and pipeline rules
+5. **Code**
+
+Claude must never modify a lower layer in a way that violates a higher layer.
+
 ## Security Rules
 - `.env` is the secrets file for this project — NEVER read, display, or output its contents
 - NEVER display API keys, tokens, passwords, or secrets of any kind
@@ -43,3 +55,12 @@ Do NOT soften structural labels with phrases such as: "appears to", "may be", "c
 - **Manifesto** defines the philosophy and doctrine
 - **Renderer** ensures the code actually outputs it correctly
 - Without both, systems drift
+
+## PEG (Persuasion-Evidence Gap) — Locked Alignment
+
+1. **PEG Doctrine v1.1 is locked** — see `docs/doctrine/peg_doctrine.md`
+2. **`engine/analysis/peg.py` is aligned** with the doctrine
+3. **Mechanism-based reporting, not object labeling** — PEG describes structural persuasion mechanisms, not article identity
+4. **Fail-closed to known mechanisms** — unknown mechanism strings are silently dropped; only `_KNOWN_MECHANISMS` enter counts or output
+5. **`high_fragility` means only `argument_fragility == "high"`** — no "elevated" synonym
+6. **Epistemic Success is deferred** to a separate future module (not part of PEG)

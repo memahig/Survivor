@@ -566,7 +566,10 @@ def compile_reviewer_pack(
             )
 
         # Step 1: Semantic normalization — catches "assertion" → "factual" etc.
-        normalize_reviewer_pack(pack)
+        # Pass available_eids so Layer 7 strips reviewer-local IDs (e.g. claude-PC4)
+        # BEFORE adjudication runs.
+        _eid_set = set(available_eids) if available_eids is not None else None
+        normalize_reviewer_pack(pack, available_eids=_eid_set)
 
         # Step 2: Annotate raw_* fields (post-normalization for canonical audit)
         _annotate_raw_fields(pack)

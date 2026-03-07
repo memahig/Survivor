@@ -105,15 +105,20 @@ def _top_mechanism_names(active_mechanisms: List[str], max_show: int = 3) -> Lis
     return [_MECHANISM_LABELS.get(m, m) for m in sorted_mechs[:max_show]]
 
 
+# All known PEG mechanisms — fail-closed: unknown strings are ignored and never
+# enter active_mechanisms, counts, or rendered output.
+_KNOWN_MECHANISMS = _CORE_MECHANISMS | _SECONDARY_MECHANISMS
+
+
 def _extract_unique_mechanisms(blocks: List[Any]) -> List[str]:
-    """Extract mechanism names from blocks, preserving order, deduplicating."""
+    """Extract known mechanism names only, preserving order and deduplicating."""
     seen: set[str] = set()
     result: List[str] = []
     for block in blocks:
         if not isinstance(block, dict):
             continue
         mech = _s(block.get("mechanism"))
-        if mech and mech not in seen:
+        if mech in _KNOWN_MECHANISMS and mech not in seen:
             seen.add(mech)
             result.append(mech)
     return result
@@ -164,7 +169,7 @@ def build_peg_profile(enriched: Dict[str, Any]) -> Dict[str, Any]:
     tilt_active = "load_bearing_weakness" in active_mechanisms
 
     # ---- Fragility Sensitivity Principle ----
-    high_fragility = fragility in ("high", "elevated")
+    high_fragility = fragility == "high"
     has_omission_dependence = "omission_dependence" in active_mechanisms
     fragility_sensitivity = high_fragility and has_omission_dependence
 
@@ -255,22 +260,24 @@ def _build_peg_line(
 
     if peg_level == "critical":
         return (
-            f"This article has the structure of propaganda. "
-            f"The argument depends on {mech_str}. "
-            f"These mechanisms push the reader toward a conclusion "
-            f"before the evidence fully supports it."
+            f"This argument heavily relies on elements commonly used in "
+            f"propaganda-style persuasion, especially {mech_str}. "
+            f"At key points, the argument depends more on persuasive structure "
+            f"than on fully demonstrated evidence."
         )
 
     if peg_level == "severe":
         return (
-            f"This article uses some propaganda-style argument techniques. "
-            f"The argument relies on {mech_str}."
+            f"This argument relies on several elements often used in "
+            f"propaganda-style persuasion, especially {mech_str}. "
+            f"These elements increase persuasive force beyond what the evidence "
+            f"fully supports."
         )
 
-    # notable
     return (
-        f"Some parts of the argument follow propaganda-style patterns, "
-        f"especially through {mech_str}."
+        f"This argument includes some elements sometimes used in "
+        f"propaganda-style persuasion, especially {mech_str}. "
+        f"In those parts, persuasive force may run ahead of the evidence."
     )
 
 

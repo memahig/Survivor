@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from typing import Any, Dict
 
 from engine.core.triage_utils import list_triage_claims
@@ -310,6 +311,11 @@ ARTICLE (normalized text):
     # JSON call helper
     # ----------------------------
     def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+        from engine.reviewers.errors import (
+            classify_error, RETRYABLE_TYPES,
+            MAX_TRANSIENT_RETRIES, RETRY_BACKOFF_SECONDS,
+        )
+
         client = self._get_client()
 
         try:
@@ -326,11 +332,7 @@ ARTICLE (normalized text):
                 f"[SYSTEM CONTRACT]\n{system_prompt}\n[/SYSTEM CONTRACT]\n\n{user_prompt}"
             )
 
-        max_retries = 3
-        delay = 3
-        last_err = None
-
-        for attempt in range(max_retries):
+        for attempt in range(1 + MAX_TRANSIENT_RETRIES):
             try:
                 if cfg is not None:
                     resp = client.models.generate_content(
@@ -343,22 +345,27 @@ ARTICLE (normalized text):
                         model=self.model,
                         contents=contents,
                     )
-                break  # success
+                break
             except Exception as e:
-                last_err = e
-                if "503" in str(e) and attempt < max_retries - 1:
-                    import time
+                error_type = classify_error(e)
+
+                if error_type in RETRYABLE_TYPES and attempt < MAX_TRANSIENT_RETRIES:
+                    delay = RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
+                    retry_num = attempt + 1
                     print(
-                        f"[{self.name}] 503 UNAVAILABLE, retry {attempt + 1}/{max_retries} "
-                        f"after {delay}s",
+                        f"[{self.name}] transient error, retry {retry_num}/{MAX_TRANSIENT_RETRIES} "
+                        f"after {delay}s: {e}",
                         file=sys.stderr,
                     )
                     time.sleep(delay)
-                    delay = min(delay * 2, 20)
                     continue
-                raise RuntimeError(f"Gemini call failed: {e}")
-        else:
-            raise RuntimeError(f"Gemini call failed after {max_retries} retries: {last_err}")
+
+                if error_type in RETRYABLE_TYPES:
+                    raise RuntimeError(
+                        f"Gemini call failed after {MAX_TRANSIENT_RETRIES} retries ({error_type.value}): {e}"
+                    )
+
+                raise RuntimeError(f"Gemini call failed ({error_type.value}): {e}")
 
         content = getattr(resp, "text", None)
         if not content or not isinstance(content, str):
@@ -399,6 +406,8 @@ ARTICLE (normalized text):
         "omission_candidates", "counterfactual_requirements",
         "claim_omissions", "article_omissions", "framing_omissions",
         "argument_summary", "object_discipline_check",
+        "rival_narratives",
+        "argument_integrity",
     })
 
     def run_triage(self, inp: ReviewerInputs) -> Dict[str, Any]:

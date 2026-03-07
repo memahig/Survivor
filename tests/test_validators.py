@@ -608,8 +608,8 @@ def test_conflicted_sources_requires_nonempty_authority_sources():
 # ---------------------------------------------------------------------------
 
 
-def test_phantom_eid_raises():
-    """EID referenced in phase2 but absent from EvidenceBank must raise."""
+def test_phantom_eid_stripped_by_layer7():
+    """EID referenced in phase2 but absent from EvidenceBank is stripped by Layer 7."""
     run = _make_run_state(
         packs={
             "openai": _make_pack(
@@ -624,8 +624,9 @@ def test_phantom_eid_raises():
             ),
         }
     )
-    with pytest.raises(RuntimeError, match="EID integrity failure"):
-        validate_run(run, _CFG)
+    validate_run(run, _CFG)  # should pass, not raise
+    openai_eids = run["phase2"]["openai"]["pillar_claims"][0]["evidence_eids"]
+    assert "E99" not in openai_eids
 
 
 def test_valid_run_passes():

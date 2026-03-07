@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
 FILE: engine/render/blunt_report.py
-VERSION: 2.0
+VERSION: 2.1
 PURPOSE:
 Reader-facing Blunt Report. Forensic storytelling — explains HOW the
 article's argument works on the reader, not just structural counts.
+
+AUTHORITY ORDER:
+- PEG profile drives Section 1 (opening) and Section 6 (bottom line)
+  when PEG level is severe or critical.
+- Old reviewer classification is secondary context, not the controlling label.
 
 RULES:
 - No hard-coded interpretive prose.
@@ -71,20 +76,25 @@ def _word_count(text: str) -> int:
 
 # ---- Section renderers ----
 
-def _section_what_it_appears_to_be(enriched: Dict[str, Any]) -> str:
-    """Section 1: What the object appears to be — classification + reviewer split explanation."""
+def _section_what_it_is(enriched: Dict[str, Any]) -> str:
+    """Section 1: What the object is — PEG-driven structural label when
+    severe/critical, old classification as fallback. No hedging."""
+    peg = _sd(enriched.get("peg_profile"))
+    peg_level = _s(peg.get("peg_level"))
+    peg_line = _s(peg.get("peg_line"))
+
     waj = _sd(enriched.get("adjudicated_whole_article_judgment"))
-
     classification = _s(waj.get("classification")) or "not assessed"
-    confidence = _s(waj.get("confidence")) or "not assessed"
 
-    lines = ["## What the object appears to be\n\n"]
-    lines.append(
-        f"This presents itself as **{classification}** "
-        f"({confidence} confidence).\n"
-    )
+    lines = ["## What the object is\n\n"]
 
-    # Check for reviewer split and explain it
+    # PEG-driven opening when severe or critical — no hedging
+    if peg_level in ("severe", "critical") and peg_line:
+        lines.append(f"**{peg_line}**\n\n")
+    else:
+        lines.append(f"This is **{classification}**.\n")
+
+    # Reviewer split as secondary context
     phase2 = _sd(enriched.get("phase2"))
     if phase2:
         classifications: Dict[str, List[str]] = {}
@@ -99,20 +109,7 @@ def _section_what_it_appears_to_be(enriched: Dict[str, Any]) -> str:
             parts = []
             for cls_val, names in sorted(classifications.items(), key=lambda x: -len(x[1])):
                 parts.append(f"{' and '.join(names)}: {cls_val}")
-            lines.append(f"Reviewers split: {'; '.join(parts)}.\n")
-
-            # Explain what the split means
-            cls_labels = sorted(classifications.keys())
-            if any(t in cls_labels for t in ("propaganda", "propaganda_patterned_advocacy", "mobilizing")):
-                lines.append(
-                    "This split itself is significant — at least one reviewer "
-                    "detected propaganda-level structural patterns.\n"
-                )
-            elif len(cls_labels) == 2:
-                lines.append(
-                    "The reviewers agree on the general type but differ "
-                    "on severity of structural concerns.\n"
-                )
+            lines.append(f"Reviewer classification: {'; '.join(parts)}.\n")
 
     return "".join(lines)
 
@@ -307,17 +304,28 @@ def _section_whats_missing(enriched: Dict[str, Any]) -> str:
 
 
 def _section_bottom_line(enriched: Dict[str, Any]) -> str:
-    """Section 6: Bottom line — uses reader_interpretation.bottom_line_plain."""
+    """Section 6: Bottom line — PEG-driven when severe/critical,
+    falls back to reader_interpretation.bottom_line_plain, then structural summary."""
+    lines = ["\n## Bottom line\n\n"]
+
+    # PEG authority: when PEG is severe or critical, PEG gets the last word
+    peg = _sd(enriched.get("peg_profile"))
+    peg_level = _s(peg.get("peg_level"))
+    peg_line = _s(peg.get("peg_line"))
+
+    if peg_level in ("severe", "critical") and peg_line:
+        lines.append(f"{peg_line}\n")
+        return "".join(lines)
+
+    # Fallback: reader_interpretation bottom line (for notable/minimal)
     interp = _sd(enriched.get("reader_interpretation"))
     bottom = _s(interp.get("bottom_line_plain"))
-
-    lines = ["\n## Bottom line\n\n"]
 
     if bottom and "error" not in interp:
         lines.append(f"{bottom}\n")
         return "".join(lines)
 
-    # Fallback to structural summary
+    # Final fallback: structural summary
     waj = _sd(enriched.get("adjudicated_whole_article_judgment"))
     classification = _s(waj.get("classification")) or "not assessed"
     groups = _sl(enriched.get("adjudicated_claims"))
@@ -383,6 +391,7 @@ def render_blunt_report(
     Render the reader-facing Blunt Report from enriched substrate.
 
     6 sections, forensic storytelling structure.
+    PEG drives opening and bottom line when severe/critical.
     Every sentence substrate-derived.
     Fail-closed per section.
     """
@@ -392,7 +401,7 @@ def render_blunt_report(
     sections: List[str] = []
 
     _SECTION_RENDERERS = [
-        ("What the object appears to be", _section_what_it_appears_to_be),
+        ("What the object is", _section_what_it_is),
         ("What the object reads like", _section_what_it_reads_like),
         ("The story in brief", _section_story_in_brief),
         ("How the story is put together", _section_how_put_together),
@@ -433,6 +442,7 @@ def render_blunt_report_json(
 
     waj = _sd(enriched.get("adjudicated_whole_article_judgment"))
     groups = _sl(enriched.get("adjudicated_claims"))
+    peg = _sd(enriched.get("peg_profile"))
 
     reads_like = _sd(enriched.get("reads_like"))
     load_bearing = _sd(enriched.get("load_bearing"))
@@ -474,7 +484,8 @@ def render_blunt_report_json(
             })
 
     return {
-        "what_it_appears_to_be": {
+        "peg_profile": peg,
+        "what_it_is": {
             "classification": _s(waj.get("classification")),
             "confidence": _s(waj.get("confidence")),
         },
@@ -504,11 +515,12 @@ def render_blunt_report_json(
             "omissions": sig_omissions,
         },
         "bottom_line": {
+            "peg_level": _s(peg.get("peg_level")),
+            "peg_line": _s(peg.get("peg_line")),
             "classification": _s(waj.get("classification")),
             "supported_count": supported,
             "total_count": len(groups),
             "fragility": _s(load_bearing.get("argument_fragility")),
-            "top_signal": _s(signals[0].get("summary")) if signals and isinstance(signals[0], dict) else "",
             "bottom_line_plain": _s(_sd(enriched.get("reader_interpretation")).get("bottom_line_plain")),
         },
     }

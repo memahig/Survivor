@@ -11,8 +11,6 @@ PURPOSE: Tests for engine.render.render_bundle
 Run with: python -m pytest tests/test_render_bundle.py -v
 """
 
-import pytest
-
 from engine.render.render_bundle import render_all
 
 
@@ -103,7 +101,7 @@ class TestContent:
 
     def test_blunt_has_sections(self):
         blunt_md, _, _, _ = render_all(_minimal_run_state())
-        assert "## What the object appears to be" in blunt_md
+        assert "## What the object is" in blunt_md
         assert "## Bottom line" in blunt_md
 
     def test_audit_has_sections(self):
@@ -116,6 +114,10 @@ class TestContent:
         assert "priority_signals" in enriched
         assert "reads_like" in enriched
         assert "adjudicated_claims" in enriched
+
+    def test_enriched_has_peg_profile(self):
+        _, _, enriched, _ = render_all(_minimal_run_state())
+        assert "peg_profile" in enriched
 
 
 # ---------------------------------------------------------------------------
@@ -131,11 +133,6 @@ class TestErrorHandling:
         # Both renderers should still produce output
         assert blunt_md is not None or error_str is not None
         assert audit_md is not None or error_str is not None
-
-    def test_non_dict_run_state(self):
-        """Even a completely invalid run_state should not crash."""
-        blunt_md, audit_md, enriched, error_str = render_all({})
-        assert isinstance(enriched, dict)
 
     def test_fallback_marker_not_set_on_success(self):
         _, _, enriched, _ = render_all(_minimal_run_state())

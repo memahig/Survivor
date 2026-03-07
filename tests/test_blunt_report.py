@@ -105,7 +105,7 @@ class TestSectionHeaders:
 
     def test_all_six_headers_present(self):
         md = render_blunt_report(_minimal_enriched())
-        assert "## What the object appears to be" in md
+        assert "## What the object is" in md
         assert "## What the object reads like" in md
         assert "## The story in brief" in md
         assert "## How the story is put together" in md
@@ -154,13 +154,13 @@ class TestContent:
 
     def test_reviewer_split_shown(self):
         md = render_blunt_report(_minimal_enriched())
-        assert "Reviewers split" in md
+        assert "Reviewer classification" in md
 
     def test_no_reviewer_split_when_unanimous(self):
         enriched = _minimal_enriched()
         enriched["phase2"]["gemini"]["whole_article_judgment"]["classification"] = "reporting"
         md = render_blunt_report(enriched)
-        assert "Reviewers split" not in md
+        assert "Reviewer classification" not in md
 
     def test_fragility_in_output(self):
         md = render_blunt_report(_minimal_enriched())
@@ -219,7 +219,7 @@ class TestFailClosed:
 
     def test_empty_enriched(self):
         md = render_blunt_report({})
-        assert "## What the object appears to be" in md
+        assert "## What the object is" in md
         assert "not assessed" in md.lower()
 
     def test_none_reads_like(self):
@@ -276,14 +276,18 @@ class TestJsonOutput:
     def test_json_keys(self):
         obj = render_blunt_report_json(_minimal_enriched())
         expected_keys = {
-            "what_it_appears_to_be", "what_it_reads_like", "story_in_brief",
+            "peg_profile", "what_it_is", "what_it_reads_like", "story_in_brief",
             "how_put_together", "whats_missing", "bottom_line",
         }
         assert set(obj.keys()) == expected_keys
 
     def test_json_classification(self):
         obj = render_blunt_report_json(_minimal_enriched())
-        assert obj["what_it_appears_to_be"]["classification"] == "reporting"
+        assert obj["what_it_is"]["classification"] == "reporting"
+
+    def test_json_includes_peg_profile(self):
+        obj = render_blunt_report_json(_minimal_enriched())
+        assert "peg_profile" in obj
 
     def test_json_support_count(self):
         obj = render_blunt_report_json(_minimal_enriched())

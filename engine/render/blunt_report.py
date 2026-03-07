@@ -1,22 +1,47 @@
 #!/usr/bin/env python3
 """
 FILE: engine/render/blunt_report.py
-VERSION: 1.0
+VERSION: 2.0
 PURPOSE:
-Reader-facing Blunt Report. 150-300 words target, hard max 400.
-6 sections. Every sentence substrate-derived.
+Reader-facing Blunt Report. Forensic storytelling — explains HOW the
+article's argument works on the reader, not just structural counts.
 
 RULES:
 - No hard-coded interpretive prose.
 - No motive attribution.
 - No euphemistic smoothing.
-- Fail-closed: each section try/except → "Not assessed." on error.
+- Fail-closed: each section try/except -> "Not assessed." on error.
 - Reads enriched_substrate only.
+- Every sentence substrate-derived.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
+
+
+# ---- BLUNT STRUCTURAL WARNING FORMAT ----
+#
+# The renderer should follow this pattern when PEG is critical:
+#
+# 1. Structural label
+# 2. Mechanism explanation
+# 3. Reader impact
+#
+# Example:
+#
+# This article has the structure of propaganda.
+#
+# The argument depends on omitted rival explanations, unsupported causal claims,
+# and escalating existential framing.
+#
+# These mechanisms push the reader toward a conclusion before the evidence
+# fully supports it.
+#
+# Do NOT soften structural labels with phrases such as:
+# "appears to", "may be", "could be considered".
+#
+# The system explains mechanisms rather than speculating about author intent.
 
 
 # ---- Safe accessors ----
@@ -47,19 +72,19 @@ def _word_count(text: str) -> int:
 # ---- Section renderers ----
 
 def _section_what_it_appears_to_be(enriched: Dict[str, Any]) -> str:
-    """What the object appears to be"""
+    """Section 1: What the object appears to be — classification + reviewer split explanation."""
     waj = _sd(enriched.get("adjudicated_whole_article_judgment"))
 
     classification = _s(waj.get("classification")) or "not assessed"
     confidence = _s(waj.get("confidence")) or "not assessed"
 
-    lines = [f"## What the object appears to be\n\n"]
+    lines = ["## What the object appears to be\n\n"]
     lines.append(
         f"This presents itself as **{classification}** "
         f"({confidence} confidence).\n"
     )
 
-    # Check for reviewer split
+    # Check for reviewer split and explain it
     phase2 = _sd(enriched.get("phase2"))
     if phase2:
         classifications: Dict[str, List[str]] = {}
@@ -76,11 +101,24 @@ def _section_what_it_appears_to_be(enriched: Dict[str, Any]) -> str:
                 parts.append(f"{' and '.join(names)}: {cls_val}")
             lines.append(f"Reviewers split: {'; '.join(parts)}.\n")
 
+            # Explain what the split means
+            cls_labels = sorted(classifications.keys())
+            if any(t in cls_labels for t in ("propaganda", "propaganda_patterned_advocacy", "mobilizing")):
+                lines.append(
+                    "This split itself is significant — at least one reviewer "
+                    "detected propaganda-level structural patterns.\n"
+                )
+            elif len(cls_labels) == 2:
+                lines.append(
+                    "The reviewers agree on the general type but differ "
+                    "on severity of structural concerns.\n"
+                )
+
     return "".join(lines)
 
 
 def _section_what_it_reads_like(enriched: Dict[str, Any]) -> str:
-    """Section 2: What the object reads like. From reads_like_label module."""
+    """Section 2: What the object reads like — reads_like label + load-bearing signals."""
     reads_like = _sd(enriched.get("reads_like"))
     label = _s(reads_like.get("label"))
 
@@ -92,44 +130,78 @@ def _section_what_it_reads_like(enriched: Dict[str, Any]) -> str:
         lines.append("Not assessed.\n")
         return "".join(lines)
 
-    # Use reader_interpretation bottom line if available
+    # Show top load-bearing failures as concrete evidence for the reads-like label
     interp = _sd(enriched.get("reader_interpretation"))
-    bottom = _s(interp.get("bottom_line_plain"))
-    if bottom and "error" not in interp:
-        lines.append(f"\n{bottom}\n")
-    else:
-        # Fallback: top 1-2 priority signals
-        signals = _sl(enriched.get("priority_signals"))
-        shown = 0
-        for sig in signals:
-            if not isinstance(sig, dict):
-                continue
-            summary = _s(sig.get("summary"))
-            if summary and shown < 2:
-                lines.append(f"- {summary}\n")
-                shown += 1
+    blocks = _sl(interp.get("mechanism_blocks"))
+    if blocks and "error" not in interp:
+        lb_block = next(
+            (b for b in blocks if isinstance(b, dict) and b.get("mechanism") == "load_bearing_weakness"),
+            None,
+        )
+        if lb_block:
+            # Extract the rejected/downgraded claims from load-bearing
+            lb_data = _sd(enriched.get("load_bearing"))
+            claims = _sl(enriched.get("adjudicated_claims"))
+            lb_ids = set(_sl(lb_data.get("load_bearing_group_ids")))
+            for c in claims:
+                if not isinstance(c, dict):
+                    continue
+                gid = c.get("group_id", "")
+                adj = c.get("adjudication", "")
+                if gid in lb_ids and adj in ("rejected", "downgraded"):
+                    text = _truncate(_s(c.get("text")), 120)
+                    if text:
+                        lines.append(f"\nLoad-bearing claim {adj}: \"{text}\"\n")
 
     return "".join(lines)
 
 
 def _section_story_in_brief(enriched: Dict[str, Any]) -> str:
-    """The story in brief"""
+    """Section 3: The story in brief — uses story clusters when available,
+    falls back to high-centrality kept claims."""
+    clusters = _sl(enriched.get("story_clusters"))
     groups = _sl(enriched.get("adjudicated_claims"))
 
     lines = ["\n## The story in brief\n\n"]
 
+    # Prefer story clusters (grouped by topic)
+    if clusters and not isinstance(enriched.get("story_clusters"), dict):
+        # Filter to clusters with at least one kept claim, sort by max_centrality
+        kept_clusters = []
+        for cl in clusters:
+            if not isinstance(cl, dict):
+                continue
+            adj_summary = _sd(cl.get("adjudication_summary"))
+            if adj_summary.get("kept", 0) > 0:
+                kept_clusters.append(cl)
+
+        kept_clusters.sort(
+            key=lambda c: -(c.get("max_centrality", 1) if isinstance(c.get("max_centrality"), int) else 1)
+        )
+
+        if kept_clusters:
+            lines.append("The article's core arguments:\n\n")
+            for cl in kept_clusters[:5]:
+                text = _truncate(_s(cl.get("canonical_text")), 120)
+                member_count = len(_sl(cl.get("member_group_ids")))
+                if text:
+                    if member_count > 1:
+                        lines.append(f"- {text} ({member_count} related claims)\n")
+                    else:
+                        lines.append(f"- {text}\n")
+            return "".join(lines)
+
+    # Fallback: kept claims sorted by centrality
     if not groups:
         lines.append("No claims were extracted.\n")
         return "".join(lines)
 
-    # Filter to kept claims, sort by centrality desc
     kept = [
         _sd(g) for g in groups
         if isinstance(g, dict) and g.get("adjudication") == "kept"
     ]
     kept.sort(key=lambda g: -(g.get("centrality", 1) if isinstance(g.get("centrality"), int) else 1))
 
-    # Prefer centrality >= 2, but include lower if < 3 results
     high = [g for g in kept if isinstance(g.get("centrality"), int) and g.get("centrality", 0) >= 2]
     if len(high) < 3:
         high = kept
@@ -149,7 +221,8 @@ def _section_story_in_brief(enriched: Dict[str, Any]) -> str:
 
 
 def _section_how_put_together(enriched: Dict[str, Any]) -> str:
-    """Section 4: How the story is put together — mechanism blocks from interpretation layer."""
+    """Section 4: How the story is put together — numbered mechanism blocks
+    from the interpretation layer. This is the forensic storytelling section."""
     interp = _sd(enriched.get("reader_interpretation"))
     blocks = _sl(interp.get("mechanism_blocks"))
 
@@ -172,13 +245,17 @@ def _section_how_put_together(enriched: Dict[str, Any]) -> str:
             lines.append("No structural mechanisms detected.\n")
         return "".join(lines)
 
+    # Render numbered mechanism blocks
+    block_num = 0
     for block in blocks:
         if not isinstance(block, dict):
             continue
         title = _s(block.get("title"))
         body = _s(block.get("body"))
-        if title:
-            lines.append(f"### {title}\n\n")
+        if not title:
+            continue
+        block_num += 1
+        lines.append(f"### {block_num}. {title}\n\n")
         if body:
             lines.append(f"{body}\n\n")
 
@@ -205,17 +282,32 @@ def _section_whats_missing(enriched: Dict[str, Any]) -> str:
         lines.append("No significant omissions identified.\n")
         return "".join(lines)
 
-    for om in significant[:3]:
-        text = _truncate(_s(om.get("merged_text")), 100)
-        severity = _s(om.get("severity"))
-        if text:
-            lines.append(f"- {text} [{severity}]\n")
+    shown = 0
+    max_show = 5
+
+    for om in significant:
+        if shown >= max_show:
+            break
+        text = _truncate(_s(om.get("merged_text")), 140)
+        if not text:
+            continue
+        kind = om.get("kind", "")
+        frame_used = _truncate(_s(om.get("frame_used_by_article")), 80)
+        if kind == "framing_omission" and frame_used:
+            lines.append(f"- Frame used: \"{frame_used}\" \u2014 missing: \"{text}\"\n")
+        else:
+            lines.append(f"- {text}\n")
+        shown += 1
+
+    remaining = len(significant) - shown
+    if remaining > 0:
+        lines.append(f"\n({remaining} additional omission(s) not shown.)\n")
 
     return "".join(lines)
 
 
 def _section_bottom_line(enriched: Dict[str, Any]) -> str:
-    """Bottom line — uses reader_interpretation.bottom_line_plain when available."""
+    """Section 6: Bottom line — uses reader_interpretation.bottom_line_plain."""
     interp = _sd(enriched.get("reader_interpretation"))
     bottom = _s(interp.get("bottom_line_plain"))
 
@@ -235,9 +327,14 @@ def _section_bottom_line(enriched: Dict[str, Any]) -> str:
         if isinstance(g, dict) and g.get("adjudication") == "kept"
     )
 
+    lb = _sd(enriched.get("load_bearing"))
+    fragility = _s(lb.get("argument_fragility"))
+
     parts = [f"**{classification.title()}.**"]
     if total > 0:
         parts.append(f"{supported} of {total} core claims supported.")
+    if fragility in ("high", "elevated"):
+        parts.append(f"The argument is structurally {fragility}.")
     lines.append(" ".join(parts) + "\n")
 
     return "".join(lines)
@@ -255,25 +352,18 @@ def _trim_bullets(section: str, keep: int) -> str:
     return "\n".join(ln for i, ln in enumerate(lines) if i not in remove)
 
 
-def _enforce_word_limit(sections: List[str], max_words: int = 300) -> List[str]:
+def _enforce_word_limit(sections: List[str], max_words: int = 1500) -> List[str]:
     """
-    If total word count exceeds max_words, trim sections 3 and 5 first.
-    Sections are 0-indexed: section 3 is index 2, section 5 is index 4.
+    If total word count exceeds max_words, trim section 3 (story in brief) only.
+    Never trim section 5 (omissions) — that is critical forensic content.
+    Sections are 0-indexed: section 3 is index 2.
     """
     total = sum(_word_count(s) for s in sections)
     if total <= max_words:
         return sections
 
-    # Trim section 5 (index 4) bullets down to 2, then 1
-    for keep in (2, 1):
-        if len(sections) > 4:
-            sections[4] = _trim_bullets(sections[4], keep)
-        total = sum(_word_count(s) for s in sections)
-        if total <= max_words:
-            return sections
-
-    # Trim section 3 (index 2) bullets down to 3, then 2
-    for keep in (3, 2):
+    # Trim section 3 (index 2) bullets down to 4, then 3
+    for keep in (4, 3):
         if len(sections) > 2:
             sections[2] = _trim_bullets(sections[2], keep)
         total = sum(_word_count(s) for s in sections)
@@ -292,7 +382,7 @@ def render_blunt_report(
     """
     Render the reader-facing Blunt Report from enriched substrate.
 
-    6 sections, 150-300 words target.
+    6 sections, forensic storytelling structure.
     Every sentence substrate-derived.
     Fail-closed per section.
     """
@@ -317,7 +407,7 @@ def render_blunt_report(
             sections.append(f"\n## {title}\n\nNot assessed.\n")
 
     # Word count enforcement
-    max_words = config.get("blunt_max_words", 500)
+    max_words = config.get("blunt_max_words", 1500)
     sections = _enforce_word_limit(sections, max_words)
 
     # Header
@@ -348,6 +438,7 @@ def render_blunt_report_json(
     load_bearing = _sd(enriched.get("load_bearing"))
     signals = _sl(enriched.get("priority_signals"))
     ranked_omissions = _sl(enriched.get("ranked_omissions"))
+    clusters = _sl(enriched.get("story_clusters"))
 
     # Support count — use adjudication status, not vote arithmetic
     supported = sum(
@@ -366,7 +457,21 @@ def render_blunt_report_json(
         {"text": _s(om.get("merged_text")), "severity": _s(om.get("severity"))}
         for om in ranked_omissions
         if isinstance(om, dict) and om.get("severity") in ("load_bearing", "important")
-    ][:3]
+    ][:5]
+
+    # Story clusters for JSON
+    story_clusters_json = []
+    for cl in clusters:
+        if not isinstance(cl, dict):
+            continue
+        adj_summary = _sd(cl.get("adjudication_summary"))
+        if adj_summary.get("kept", 0) > 0:
+            story_clusters_json.append({
+                "cluster_id": _s(cl.get("cluster_id")),
+                "canonical_text": _truncate(_s(cl.get("canonical_text")), 120),
+                "member_count": len(_sl(cl.get("member_group_ids"))),
+                "max_centrality": cl.get("max_centrality", 1),
+            })
 
     return {
         "what_it_appears_to_be": {
@@ -387,6 +492,7 @@ def render_blunt_report_json(
                 }
                 for g in kept[:5]
             ],
+            "story_clusters": story_clusters_json[:5],
         },
         "how_put_together": {
             "load_bearing_count": len(_sl(load_bearing.get("load_bearing_group_ids"))),

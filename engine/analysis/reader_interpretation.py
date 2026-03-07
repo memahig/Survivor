@@ -343,6 +343,75 @@ def _detect_baseline_absence(enriched: Dict[str, Any]) -> Dict[str, Any] | None:
     }
 
 
+def _detect_scope_inflation(enriched: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Detect scope inflation — selected examples treated as universal description.
+
+    Fires when: high-centrality claims with limited evidence exist alongside
+    omission dependence signals (missing alternative perspectives). This
+    combination suggests the article generalizes from narrow evidence while
+    excluding the broader context that would limit those generalizations.
+    """
+    claims = _sl(enriched.get("adjudicated_claims"))
+    lb = _sd(enriched.get("load_bearing"))
+    ranked = _sl(enriched.get("ranked_omissions"))
+
+    # Need high-centrality claims with weak evidence support
+    thin_evidence_central = []
+    for c in claims:
+        if not isinstance(c, dict):
+            continue
+        centrality = c.get("centrality", 1)
+        if not isinstance(centrality, int) or centrality < 2:
+            continue
+        eids = c.get("evidence_eids", [])
+        if not isinstance(eids, list):
+            eids = []
+        adj = c.get("adjudication", "")
+        # Central claim with thin evidence (0-1 sources) that was kept
+        if len(eids) <= 1 and adj == "kept":
+            thin_evidence_central.append(c)
+
+    if len(thin_evidence_central) < 2:
+        return None
+
+    # Also need omission signals (alternative perspectives missing)
+    significant_omissions = [
+        om for om in ranked
+        if isinstance(om, dict) and om.get("severity") in ("load_bearing", "important")
+    ]
+    if not significant_omissions:
+        return None
+
+    body_parts = [
+        f"The article makes {len(thin_evidence_central)} central claim(s) "
+        f"supported by thin evidence (0-1 sources each), while "
+        f"{len(significant_omissions)} significant perspective(s) are absent."
+    ]
+    body_parts.append(
+        "This combination — broad claims with narrow evidence, "
+        "plus missing alternative viewpoints — means selected examples "
+        "are being treated as a complete description."
+    )
+    for c in thin_evidence_central[:3]:
+        text = _trunc(c.get("text", ""), 100)
+        if text:
+            body_parts.append(f"- \"{text}\"")
+    body_parts.append(
+        "\nWhen a few examples stand in for an entire phenomenon, "
+        "you stop evaluating evidence and start accepting a story."
+    )
+
+    return {
+        "mechanism": "scope_inflation",
+        "title": "It takes selected examples and treats them as the whole picture",
+        "body": "\n".join(body_parts),
+        "source_signals": [
+            {"type": "thin_evidence_central_claims", "count": len(thin_evidence_central)},
+            {"type": "significant_omissions", "count": len(significant_omissions)},
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Bottom line synthesis
 # ---------------------------------------------------------------------------
@@ -368,8 +437,22 @@ def _synthesize_bottom_line(
     # Build assessment
     parts = []
 
-    # Classification sentence
-    parts.append(f"This article is best read as **{classification}**.")
+    # Classification sentence — context-aware
+    mechanism_names = [b["mechanism"] for b in blocks]
+    is_propaganda_pattern = (
+        len(blocks) >= 3
+        or ("omission_dependence" in mechanism_names and "load_bearing_weakness" in mechanism_names)
+    )
+
+    if is_propaganda_pattern and classification.lower() in (
+        "advocacy", "propaganda", "propaganda_patterned_advocacy", "mobilizing",
+    ):
+        parts.append(
+            f"This article is best read as **propaganda-patterned {classification}**, "
+            f"not as balanced analysis."
+        )
+    else:
+        parts.append(f"This article is best read as **{classification}**.")
 
     # Support ratio
     if total > 0:
@@ -385,12 +468,15 @@ def _synthesize_bottom_line(
         else:
             parts.append(f"{supported} of {total} core claims are supported.")
 
-    # Mechanism summary — what the structure does
-    mechanism_names = [b["mechanism"] for b in blocks]
+    # Mechanism summary — what the structure does (richer combinations)
+    if "scope_inflation" in mechanism_names:
+        parts.append(
+            "The argument expands selected examples into universal descriptions."
+        )
 
     if "omission_dependence" in mechanism_names and "load_bearing_weakness" in mechanism_names:
         parts.append(
-            "The argument depends on excluding alternative explanations "
+            "It depends on excluding alternative explanations "
             "and places its strongest conclusions on its weakest evidence."
         )
     elif "omission_dependence" in mechanism_names:
@@ -409,18 +495,24 @@ def _synthesize_bottom_line(
             "Key causal claims are asserted rather than demonstrated."
         )
 
+    if "framing_escalation" in mechanism_names:
+        parts.append(
+            "The framing escalates beyond what the evidence supports."
+        )
+
     # Fragility
     if fragility == "high":
         parts.append("The argument is structurally fragile.")
     elif fragility == "elevated":
         parts.append("The argument has notable structural weaknesses.")
 
-    # Reader guidance based on pattern severity
+    # Reader guidance based on pattern severity — the "human voice"
     if len(blocks) >= 3:
         parts.append(
             "If you feel pulled more than shown, "
-            "and certain before being given comparative evidence — "
-            "that is the structure working."
+            "certain more than demonstrated, "
+            "and alarmed before being given real comparative evidence — "
+            "that is not an accident. That is the structure working."
         )
 
     return " ".join(parts)
@@ -460,6 +552,7 @@ def interpret_for_reader(
 
     # Run all detectors in priority order
     _DETECTORS = [
+        _detect_scope_inflation,
         _detect_omission_dependence,
         _detect_unsupported_causal,
         _detect_framing_escalation,

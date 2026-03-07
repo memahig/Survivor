@@ -97,7 +97,15 @@ def _merge_article_omissions(
     buckets: Dict[str, List[tuple]] = {}
 
     for reviewer, pack in packs.items():
-        for item in pack.get("article_omissions", []):
+        items = pack.get("article_omissions", [])
+        if not isinstance(items, list) or not items:
+            # Fallback: treat omission_candidates as article-level omissions
+            items = pack.get("omission_candidates", [])
+            if not isinstance(items, list):
+                items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
             mf = item.get("missing_frame", "")
             key = _norm(mf)
             buckets.setdefault(key, []).append((reviewer, item))

@@ -20,10 +20,14 @@ def rank_omissions(
     Rank all merged omissions into severity tiers.
 
     Severity is impact-based:
-    - load_bearing: concern_level=="high" AND (targets a load-bearing group
-                    OR affects a centrality>=3 claim)
-    - important: concern_level in ("elevated","high") AND not load_bearing
+    - load_bearing: concern in ("elevated","high") AND targets critical claim
+    - important: targets critical claim, OR concern in ("elevated","high"),
+                 OR fragility-boosted (high fragility + substantive text)
     - minor: everything else
+
+    The fragility boost ensures that for structurally fragile articles
+    (advocacy/propaganda patterns), single-reviewer omissions with
+    substantive text are surfaced rather than silently dropped.
 
     Args:
         structural_forensics: run_state.adjudicated.structural_forensics
@@ -36,6 +40,13 @@ def rank_omissions(
     """
     if not isinstance(structural_forensics, dict):
         return []
+
+    # Extract argument fragility for boost logic
+    ai = structural_forensics.get("argument_integrity")
+    merged_fragility = ""
+    if isinstance(ai, dict):
+        merged_fragility = ai.get("merged_argument_fragility", "")
+    high_fragility = merged_fragility in ("high", "elevated")
 
     # Build centrality lookup: claim_id -> centrality
     high_centrality_ids: Set[str] = set()
@@ -105,9 +116,17 @@ def rank_omissions(
                     affects_critical = True
                     reason_parts.append(f"affects high-centrality claim {acid}")
 
-        # Severity model: impact-aware, not just reviewer-count gated.
-        # An omission affecting load-bearing/high-centrality claims is at least
-        # "important" regardless of how many reviewers caught it.
+        # Fragility boost: when the article is structurally fragile,
+        # single-reviewer omissions with substantive text (> 30 chars)
+        # are boosted to "important". This prevents the common failure
+        # where reviewers describe the same omission differently,
+        # conservative text merging keeps them separate, and ALL
+        # omissions end up as "minor".
+        merged_text = om.get("merged_text", "")
+        has_substantive_text = isinstance(merged_text, str) and len(merged_text.strip()) > 30
+        fragility_boosted = high_fragility and has_substantive_text
+
+        # Severity model: impact-aware with fragility boost.
         if affects_critical and concern in ("elevated", "high"):
             severity = "load_bearing"
             severity_reason = "; ".join(reason_parts) + f" (concern: {concern})"
@@ -117,6 +136,9 @@ def rank_omissions(
         elif concern in ("elevated", "high"):
             severity = "important"
             severity_reason = f"concern level: {concern}"
+        elif fragility_boosted:
+            severity = "important"
+            severity_reason = f"fragility boost: argument fragility is {merged_fragility}"
         else:
             severity = "minor"
             severity_reason = f"concern level: {concern}"

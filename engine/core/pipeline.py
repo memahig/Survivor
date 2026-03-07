@@ -294,6 +294,12 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     _write_status(outdir, "adjudication", "running adjudication")
     adjudicated = adjudicate(phase2_sanitized, config)
 
+    # Structural forensics live in Phase 1 enrichment data, not Phase 2.
+    # The adjudicator's internal merge uses phase2 (which lacks enrichment keys),
+    # so we re-merge from phase1_outputs where the data actually lives.
+    from engine.core.forensics_merge import merge_structural_forensics
+    adjudicated["structural_forensics"] = merge_structural_forensics(phase1_outputs)
+
     run_state = {
         "article": article,
         "evidence_bank": evidence_bank,

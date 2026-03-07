@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 from typing import Optional, Dict, Any, List, Callable
 
@@ -69,9 +70,8 @@ def _write_compile_error_report(error: ReviewerPackCompileError, outdir: str) ->
     except Exception:
         pass  # best-effort; don't mask the original error
 
-    # Always print to stdout so Streamlit Cloud logs capture it.
+    # Always print to stderr so Streamlit Cloud logs capture it.
     try:
-        import sys
         d = error.to_debug_dict()
         print(
             f"[COMPILE_ERROR] reviewer={d['reviewer_id']} attempt={d['attempt']}",
@@ -129,7 +129,6 @@ def _build_reviewers_from_config(config: Dict[str, Any]) -> List[Any]:
 
 def _write_status(outdir: str, stage: str, detail: str = "") -> None:
     """Write pipeline_status.json for Streamlit to read during execution."""
-    import time
     path = os.path.join(outdir, "pipeline_status.json")
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -199,11 +198,6 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     # ---------------------------
     _write_status(outdir, "spine", "building argument spine")
     spine = build_argument_spine(triage_outputs)
-    print(
-        f"[spine] pillar_claims={len(spine.get('pillar_claims', []))}, "
-        f"questionable_claims={len(spine.get('questionable_claims', []))}",
-        file=sys.stderr,
-    )
 
     # ---------------------------
     # Phase 1, Pass 2: Enrichment (receives merged spine)

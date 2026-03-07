@@ -22,12 +22,6 @@ from typing import Any, Dict, List, Optional
 from engine.core.triage_utils import list_triage_claims
 
 
-def _md_list(items: List[str]) -> str:
-    if not items:
-        return "- (none)\n"
-    return "".join([f"- {x}\n" for x in items])
-
-
 def _vote_symbol(v: str) -> str:
     # stable, compact rendering
     if v == "supported":

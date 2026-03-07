@@ -26,7 +26,7 @@ CHANGES IN v0.3.0 (Triage Model — PR1):
 CHANGES IN v0.2.2:
 - whole_article_judgment.evidence_eids emptiness failure is now structured
   (path/expected/got + error_code=missing_whole_article_evidence) so Repair Gate can run.
-- Export normalize_reviewer_pack() (public) and keep _normalize_reviewer_pack alias for backwards compat.
+- Export normalize_reviewer_pack() (public).
 - validate_reviewer_pack now calls normalize_reviewer_pack().
 """
 
@@ -51,8 +51,6 @@ from engine.core.schema_constants import (
     SEVERITY_TIER_VALUES_ORDERED,
     SYMMETRY_BAND_VALUES_ORDERED,
     SYMMETRY_FIELDS_ALL,
-    SYMMETRY_FIELDS_BASE,
-    SYMMETRY_FIELDS_V03,
     SYMMETRY_STATUS_VALUES,
     EMPTY_EIDS_ALLOWED_CLASSIFICATIONS,
     UNCERTAIN_CLASSIFICATIONS,
@@ -531,9 +529,6 @@ def normalize_reviewer_pack(pack: Dict[str, Any]) -> None:
                         ),
                     })
 
-
-# Backwards-compatible alias (internal callers may still use the old name)
-_normalize_reviewer_pack = normalize_reviewer_pack
 
 
 def _clamp_claim_list(

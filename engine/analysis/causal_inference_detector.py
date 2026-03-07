@@ -71,7 +71,7 @@ def detect_causal_claims(
             continue
 
         has_evidence = len(evidence_eids) > 0
-        unsupported_causal = len(matched) > 0 and not has_evidence
+        unsupported_causal = not has_evidence  # matched is guaranteed non-empty here
         causal_claim_weakened = adjudication in _WEAKENED_ADJUDICATIONS
 
         results.append({

@@ -9,7 +9,6 @@ the builder (not inline system messages).
 Run with: python -m pytest tests/ -v
 """
 
-import ast
 import os
 import pytest
 

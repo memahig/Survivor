@@ -402,10 +402,29 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     with open(os.path.join(outdir, config["outputs"]["tickets_json"]), "w") as f:
         json.dump(adjudicated.get("final_tickets", []), f, indent=2)
 
+    reader_md = render_report(run_state, config)
+    debug_md = render_debug(run_state, config)
+
     with open(os.path.join(outdir, config["outputs"]["main_report"]), "w") as f:
-        f.write(render_report(run_state, config))
+        f.write(reader_md)
 
     with open(os.path.join(outdir, config["outputs"]["debug_md"]), "w") as f:
-        f.write(render_debug(run_state, config))
+        f.write(debug_md)
+
+    # ---------------------------
+    # Corpus export (fail-safe)
+    # ---------------------------
+    try:
+        from engine.io.corpus_exporter import export_corpus_case
+        corpus_root = config.get("corpus_root", "biaslens-corpus")
+        export_corpus_case(
+            run_state,
+            corpus_root=corpus_root,
+            reader_report_md=reader_md,
+            debug_report_md=debug_md,
+            config=config,
+        )
+    except Exception:
+        pass  # corpus export must never crash a successful run
 
     _write_status(outdir, "complete", "pipeline finished")

@@ -98,8 +98,9 @@ def enrich_substrate(
     9. priority_signals (needs all above)
     10. reader_interpretation (needs all above)
     11. peg_profile (post-interpretation consumer; does not perform signal detection)
+    12. esm_profile (post-interpretation consumer; parallel to PEG, non-compensating)
 
-    PEG is a qualitative post-interpretation profile builder and does not
+    PEG and ESM are qualitative post-interpretation profile builders and do not
     perform signal detection.
 
     Returns dict with run_state keys passed through + derived analysis keys.
@@ -125,6 +126,7 @@ def enrich_substrate(
         "gsae": run_state.get("gsae"),
         "divergence_radar": run_state.get("divergence_radar"),
         "verification": run_state.get("verification"),
+        "metadata": run_state.get("metadata", {}),
         # Normalized top-level keys for renderers
         "evidence_lookup": evidence_lookup,
         "adjudicated_claims": adjudicated_claims,
@@ -232,11 +234,25 @@ def enrich_substrate(
     except Exception as e:
         enriched["reader_interpretation"] = {"error": str(e)}
 
-    # ---- Module 11: PEG profile (post-interpretation consumer) ----
+    # ---- Module 11: Success signal detector (post-interpretation, pre-ESM) ----
+    try:
+        from engine.analysis.success_signal_detector import detect_success_signals
+        enriched["success_blocks"] = detect_success_signals(enriched)
+    except Exception as e:
+        enriched["success_blocks"] = {"error": str(e)}
+
+    # ---- Module 12: PEG profile (post-interpretation consumer) ----
     try:
         from engine.analysis.peg import build_peg_profile
         enriched["peg_profile"] = build_peg_profile(enriched)
     except Exception as e:
         enriched["peg_profile"] = {"error": str(e)}
+
+    # ---- Module 13: ESM profile (post-interpretation consumer, parallel to PEG) ----
+    try:
+        from engine.analysis.epistemic_success import build_success_profile
+        enriched["esm_profile"] = build_success_profile(enriched)
+    except Exception as e:
+        enriched["esm_profile"] = {"error": str(e)}
 
     return enriched

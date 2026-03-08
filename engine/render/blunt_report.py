@@ -303,9 +303,20 @@ def _section_whats_missing(enriched: Dict[str, Any]) -> str:
     return "".join(lines)
 
 
+def _render_esm_line(enriched: Dict[str, Any]) -> str:
+    """Render epistemic quality line from ESM profile, if notable or above."""
+    esm = _sd(enriched.get("esm_profile"))
+    level = _s(esm.get("success_level"))
+    line = _s(esm.get("integrity_line"))
+    if level in ("notable", "high", "exceptional") and line:
+        return f"\n**Epistemic quality:** {line}\n"
+    return ""
+
+
 def _section_bottom_line(enriched: Dict[str, Any]) -> str:
     """Section 6: Bottom line — PEG-driven when severe/critical,
-    falls back to reader_interpretation.bottom_line_plain, then structural summary."""
+    falls back to reader_interpretation.bottom_line_plain, then structural summary.
+    ESM epistemic quality line appended when notable or above."""
     lines = ["\n## Bottom line\n\n"]
 
     # PEG authority: when PEG is severe or critical, PEG gets the last word
@@ -315,6 +326,7 @@ def _section_bottom_line(enriched: Dict[str, Any]) -> str:
 
     if peg_level in ("severe", "critical") and peg_line:
         lines.append(f"{peg_line}\n")
+        lines.append(_render_esm_line(enriched))
         return "".join(lines)
 
     # Fallback: reader_interpretation bottom line (for notable/minimal)
@@ -323,6 +335,7 @@ def _section_bottom_line(enriched: Dict[str, Any]) -> str:
 
     if bottom and "error" not in interp:
         lines.append(f"{bottom}\n")
+        lines.append(_render_esm_line(enriched))
         return "".join(lines)
 
     # Final fallback: structural summary
@@ -344,6 +357,7 @@ def _section_bottom_line(enriched: Dict[str, Any]) -> str:
     if fragility in ("high", "elevated"):
         parts.append(f"The argument is structurally {fragility}.")
     lines.append(" ".join(parts) + "\n")
+    lines.append(_render_esm_line(enriched))
 
     return "".join(lines)
 
@@ -483,8 +497,16 @@ def render_blunt_report_json(
                 "max_centrality": cl.get("max_centrality", 1),
             })
 
+    esm = _sd(enriched.get("esm_profile"))
+
     return {
         "peg_profile": peg,
+        "epistemic_quality": {
+            "level": _s(esm.get("success_level")),
+            "summary": _s(esm.get("integrity_line")),
+            "active_signals": _sl(esm.get("active_successes")),
+            "domain_alignment": _s(esm.get("domain_alignment")),
+        },
         "what_it_is": {
             "classification": _s(waj.get("classification")),
             "confidence": _s(waj.get("confidence")),

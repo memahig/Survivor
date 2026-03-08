@@ -109,6 +109,8 @@ with st.sidebar:
             st.session_state.pop("_auth_pwd", None)
             st.rerun()
     st.markdown("---")
+    save_to_corpus = st.checkbox("Save to BiasLens corpus", value=True,
+                                  help="Archive this run in the local BiasLens corpus after a successful analysis.")
 
 
 # -----------------------------
@@ -287,6 +289,27 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
 
     if render_err:
         st.warning(f"Renderer warnings: {render_err}")
+
+    # ----- Corpus export (optional, fail-safe) -----
+    if save_to_corpus and run_state is not None:
+        try:
+            from engine.io.corpus_exporter import export_corpus_case
+            from engine.core.config_loader import load_config
+            cfg = load_config()
+            corpus_root = cfg.get("corpus_root", "biaslens-corpus")
+            case_path = export_corpus_case(
+                run_state,
+                corpus_root=corpus_root,
+                reader_report_md=blunt_md or report_md,
+                debug_report_md=audit_md or "# Scholar Debug Report\n\n*Not available.*\n",
+                config=cfg,
+            )
+            if case_path:
+                st.toast(f"Case archived to {os.path.basename(case_path)}", icon="✅")
+            else:
+                st.info("Analysis succeeded, but corpus export returned no path.")
+        except Exception as export_err:
+            st.info(f"Analysis succeeded, but corpus export failed: {export_err}")
 
 
 # -----------------------------

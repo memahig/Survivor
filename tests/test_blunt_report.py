@@ -276,7 +276,8 @@ class TestJsonOutput:
     def test_json_keys(self):
         obj = render_blunt_report_json(_minimal_enriched())
         expected_keys = {
-            "peg_profile", "what_it_is", "what_it_reads_like", "story_in_brief",
+            "peg_profile", "epistemic_quality",
+            "what_it_is", "what_it_reads_like", "story_in_brief",
             "how_put_together", "whats_missing", "bottom_line",
         }
         assert set(obj.keys()) == expected_keys

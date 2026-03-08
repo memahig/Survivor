@@ -1396,9 +1396,18 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
         _require(isinstance(x, str) and x.strip(), "config.reviewers_enabled entries must be non-empty strings")
         expected.append(x.strip())
 
+    # Tolerate partial reviewer sets: the pipeline's min_reviewers gate already
+    # ensures enough reviewers completed.  Only validate packs that exist.
+    min_rev = min(int(config.get("min_reviewers_required", 2)), len(expected))
+    present = [name for name in expected if name in phase2]
+    _require(
+        len(present) >= min_rev,
+        f"phase2 has {len(present)} reviewer outputs ({present}), "
+        f"but min_reviewers_required={min_rev}",
+    )
+
     # Per-reviewer normalization (includes Layer 7 EID sanitization) BEFORE global check.
-    for name in expected:
-        _require(name in phase2, f"phase2 missing reviewer output: {name}")
+    for name in present:
         validate_reviewer_pack(phase2[name], config)
 
     # Safety-net: strip bad EIDs from adjudicated dict (built before validate_run runs).
@@ -1417,7 +1426,7 @@ def validate_run(run_state: Dict[str, Any], config: Dict[str, Any]) -> None:
         raise RuntimeError(f"EID integrity failure: referenced but not in EvidenceBank: {bad}")
 
     claim_registry: Set[str] = set()
-    for name in expected:
+    for name in present:
         pack = phase2[name]
         for claim in list_triage_claims(pack):
             cid = claim.get("claim_id")

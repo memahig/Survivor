@@ -416,7 +416,11 @@ def run_pipeline(url: Optional[str], textfile: Optional[str], outdir: str) -> No
     # ---------------------------
     try:
         from engine.io.corpus_exporter import export_corpus_case
-        corpus_root = config.get("corpus_root", "biaslens-corpus")
+        corpus_root = (
+            os.environ.get("BIASLENS_CORPUS_ROOT")
+            or config.get("corpus_root")
+            or os.path.join(os.path.expanduser("~"), "biaslens-corpus")
+        )
         export_corpus_case(
             run_state,
             corpus_root=corpus_root,

@@ -291,12 +291,16 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
         st.warning(f"Renderer warnings: {render_err}")
 
     # ----- Corpus export (optional, fail-safe) -----
+    # Write outside the Streamlit-watched source tree to avoid watcher crashes.
     if save_to_corpus and run_state is not None:
         try:
             from engine.io.corpus_exporter import export_corpus_case
             from engine.core.config_loader import load_config
             cfg = load_config()
-            corpus_root = cfg.get("corpus_root", "biaslens-corpus")
+            corpus_root = os.environ.get(
+                "BIASLENS_CORPUS_ROOT",
+                os.path.join(os.path.expanduser("~"), "biaslens-corpus"),
+            )
             case_path = export_corpus_case(
                 run_state,
                 corpus_root=corpus_root,

@@ -542,6 +542,15 @@ def normalize_reviewer_pack(
                         ),
                     })
 
+    # --- Layer 8: object_discipline_check repair ---
+    odc = pack.get("object_discipline_check")
+    if isinstance(odc, dict):
+        if odc.get("status") not in ("pass", "fail"):
+            odc["status"] = "pass"
+        reason = odc.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            odc["reason"] = "No reason provided by reviewer."
+
     # --- Layer 7: Evidence EID sanitization ---
     if available_eids is not None:
         def _filter_eids(lst):

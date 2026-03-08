@@ -269,20 +269,22 @@ class TestObjectDisciplineCheck:
         })
         validate_reviewer_pack(pack, _CFG)
 
-    def test_invalid_status_raises(self):
+    def test_invalid_status_normalized(self):
+        """Layer 8 normalizer repairs invalid status to 'pass'."""
         pack = _make_pack(object_discipline_check={
             "status": "warning",
             "reason": "some drift",
         })
-        with pytest.raises(RuntimeError, match="status"):
-            validate_reviewer_pack(pack, _CFG)
+        validate_reviewer_pack(pack, _CFG)
+        assert pack["object_discipline_check"]["status"] == "pass"
 
-    def test_missing_reason_raises(self):
+    def test_missing_reason_normalized(self):
+        """Layer 8 normalizer repairs missing/empty reason."""
         pack = _make_pack(object_discipline_check={
             "status": "pass",
         })
-        with pytest.raises(RuntimeError, match="reason"):
-            validate_reviewer_pack(pack, _CFG)
+        validate_reviewer_pack(pack, _CFG)
+        assert pack["object_discipline_check"]["reason"] == "No reason provided by reviewer."
 
 
 # ---------------------------------------------------------------------------

@@ -16,10 +16,13 @@ ARCHITECTURE:
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import subprocess
 import tempfile
+import zipfile
 
 from dotenv import load_dotenv
 import streamlit as st
@@ -290,30 +293,43 @@ def _run_survivor(*, url: str | None = None, text_content: str | None = None) ->
     if render_err:
         st.warning(f"Renderer warnings: {render_err}")
 
-    # ----- Corpus export (optional, fail-safe) -----
-    # Write outside the Streamlit-watched source tree to avoid watcher crashes.
+    # ----- Case download (zip of 4 locked artifacts) -----
     if save_to_corpus and run_state is not None:
         try:
-            from engine.io.corpus_exporter import export_corpus_case
+            from engine.io.corpus_exporter import (
+                _build_article_json, _resolve_genre, _engine_version,
+                _derive_case_folder_name, _now_iso, _sd,
+            )
             from engine.core.config_loader import load_config
             cfg = load_config()
-            corpus_root = os.environ.get(
-                "BIASLENS_CORPUS_ROOT",
-                os.path.join(os.path.expanduser("~"), "biaslens-corpus"),
+
+            article = _sd(run_state.get("article"))
+            captured_at = _now_iso()
+            engine_ver = _engine_version(cfg)
+            case_name = _derive_case_folder_name(article)
+
+            article_json = _build_article_json(article, engine_ver, captured_at)
+            reader_text = blunt_md or report_md or "# Reader Review\n\n*Not available.*\n"
+            debug_text = audit_md or "# Scholar Debug Report\n\n*Not available.*\n"
+
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(f"{case_name}/article.json",
+                            json.dumps(article_json, indent=2, ensure_ascii=False))
+                zf.writestr(f"{case_name}/run.json",
+                            json.dumps(run_state, indent=2, ensure_ascii=False, default=str))
+                zf.writestr(f"{case_name}/reader_review.md", reader_text)
+                zf.writestr(f"{case_name}/scholar_debug.md", debug_text)
+            buf.seek(0)
+
+            st.download_button(
+                label="Download case archive (.zip)",
+                data=buf,
+                file_name=f"{case_name}.zip",
+                mime="application/zip",
             )
-            case_path = export_corpus_case(
-                run_state,
-                corpus_root=corpus_root,
-                reader_report_md=blunt_md or report_md,
-                debug_report_md=audit_md or "# Scholar Debug Report\n\n*Not available.*\n",
-                config=cfg,
-            )
-            if case_path:
-                st.toast(f"Case archived to {os.path.basename(case_path)}", icon="✅")
-            else:
-                st.info("Analysis succeeded, but corpus export returned no path.")
         except Exception as export_err:
-            st.info(f"Analysis succeeded, but corpus export failed: {export_err}")
+            st.info(f"Case archive could not be prepared: {export_err}")
 
 
 # -----------------------------

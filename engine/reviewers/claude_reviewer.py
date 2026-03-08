@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from typing import Any, Dict, List
 
 from engine.core.triage_utils import list_triage_claims
@@ -314,19 +315,60 @@ ARTICLE (normalized text):
     # ----------------------------
     # JSON call helper
     # ----------------------------
+    # TODO(EXIT-RAMP / PROVIDER PARITY): TEMPORARY CLAUDE-SPECIFIC RELIABILITY PATCH
+    # -------------------------------------------------------------------------------
+    # This retry/backoff logic exists only because Anthropic streaming currently
+    # drops reviewer runs intermittently.  This must NOT become the long-term pattern
+    # for provider integration.
+    #
+    # Future direction:
+    # 1. Move retry/backoff policy into a provider-agnostic reviewer transport layer.
+    # 2. Apply the same reliability contract across all providers.
+    # 3. Keep provider-specific exceptions mapped at the adapter boundary only.
+    # 4. Preserve exit ramps: no provider-specific assumptions may leak into core
+    #    schema, adjudication, PEG, EMS, or report logic.
+    #
+    # DO NOT REMOVE THIS NOTE until a shared transport/retry abstraction exists.
+    # -------------------------------------------------------------------------------
     def _call_json(self, system_prompt: str, user_prompt: str, max_tokens: int = 16384) -> Dict[str, Any]:
+        from engine.reviewers.errors import (
+            classify_error, RETRYABLE_TYPES,
+            MAX_TRANSIENT_RETRIES, RETRY_BACKOFF_SECONDS,
+        )
+
         client = self._get_client()
 
-        try:
-            with client.messages.stream(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_prompt}],
-            ) as stream:
-                resp = stream.get_final_message()
-        except Exception as e:
-            raise RuntimeError(f"Anthropic call failed: {e}")
+        for attempt in range(1 + MAX_TRANSIENT_RETRIES):
+            try:
+                with client.messages.stream(
+                    model=self.model,
+                    max_tokens=max_tokens,
+                    temperature=0.0,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_prompt}],
+                ) as stream:
+                    resp = stream.get_final_message()
+                break
+            except Exception as e:
+                error_type = classify_error(e)
+
+                if error_type in RETRYABLE_TYPES and attempt < MAX_TRANSIENT_RETRIES:
+                    delay = RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)]
+                    retry_num = attempt + 1
+                    print(
+                        f"[{self.name}] transient error, retry {retry_num}/{MAX_TRANSIENT_RETRIES} "
+                        f"after {delay}s: {e}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(delay)
+                    continue
+
+                if error_type in RETRYABLE_TYPES:
+                    raise RuntimeError(
+                        f"Anthropic call failed after {MAX_TRANSIENT_RETRIES} retries ({error_type.value}): {e}"
+                    )
+
+                raise RuntimeError(f"Anthropic call failed ({error_type.value}): {e}")
 
         if not resp or not getattr(resp, "content", None):
             raise RuntimeError("Anthropic returned empty response content")
@@ -343,6 +385,12 @@ ARTICLE (normalized text):
 
         # ---- diagnostic ----
         stop = getattr(resp, "stop_reason", None)
+        if stop == "max_tokens":
+            print(
+                f"[{self.name}] WARNING: response truncated (stop_reason=max_tokens, "
+                f"limit={max_tokens}). JSON may be incomplete.",
+                file=sys.stderr,
+            )
         print(
             f"[{self.name}] raw output: {len(content)} chars, "
             f"{len(content.splitlines())} lines, stop_reason={stop}",

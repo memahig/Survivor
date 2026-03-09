@@ -381,6 +381,43 @@ Example:
 A witness article with source asymmetry may escalate to attribution
 analysis without triggering full PEG analysis.
 
+----------------------------------------------------------------------
+9A. ROUTING PLAN RULE (LOCKED)
+----------------------------------------------------------------------
+
+L5 must not route solely by mode labels or escalation labels.
+
+Before execution routing occurs, L5 must construct a structured
+EvaluationPlan that records:
+
+- presented mode
+- mode confidence
+- persuasion heat status
+- clean-candidate status
+- escalation level
+- whether early termination is allowed
+- which baseline audits are authorized
+- which deep-analysis modules are authorized
+- whether functional review is required
+- whether full arbitration is required
+
+This rule separates concern assessment from execution and prevents the
+evaluation router from becoming an implicit second policy engine.
+
+The architectural requirement is the existence of a plan-before-execute
+step. The exact component split inside L5 remains flexible.
+
+----------------------------------------------------------------------
+9B. MODE RESULT PRESERVATION RULE (LOCKED)
+----------------------------------------------------------------------
+
+The full Stage 1 ModeResult must remain available downstream.
+
+Later layers must not reduce presented-mode classification to a bare enum
+alone. Confidence, triggering signals, formal submode, and reviewer-confirm
+state are part of the evaluation substrate and must remain accessible to
+later layers.
+
 ======================================================================
 10. AI INTERPRETATION
 ======================================================================

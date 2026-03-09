@@ -206,6 +206,9 @@ Dependencies: Stage 1 (mode context informs interpretation)
 Pipeline impact: none yet (standalone module)
 Commit: standalone
 
+Note: Stage 2 output (PersuasionResult) must be consumable by the
+future EvaluationPlan (Blueprint Rule 9A), not only by a direct router.
+
 ----------------------------------------------------------------------
 Stage 3: Escalation Router
 ----------------------------------------------------------------------
@@ -225,6 +228,9 @@ Tests prove:
 Dependencies: Stages 1 + 2
 Pipeline impact: none yet (standalone)
 Commit: standalone
+
+Note: Stage 3 must produce a structured EvaluationPlan before execution
+routing occurs (Blueprint Rule 9A — Routing Plan Rule).
 
 ----------------------------------------------------------------------
 Stage 4: Mode-Specific Baseline Audits
@@ -321,7 +327,7 @@ NormalizedMode (L2 -> downstream)
     is_uncertain: bool
 
 ----------------------------------------------------------------------
-PersuasionScreenResult (L3 output)
+PersuasionResult (L3 output)
 ----------------------------------------------------------------------
     heat_level: str           (low/moderate/high)
     score: float
@@ -343,6 +349,19 @@ EscalationDecision (L5A output)
     score: float
     triggers: list            (name, severity, evidence)
     rationale: str
+
+----------------------------------------------------------------------
+EvaluationPlan (L5 output — Blueprint Rule 9A)
+----------------------------------------------------------------------
+    presented_mode: str
+    mode_confidence: float
+    is_clean_candidate: bool
+    escalation_level: str     (none/reviewer/full)
+    stop_early_allowed: bool
+    allowed_baseline_audits: list
+    allowed_deep_modules: list
+    requires_functional_mode_review: bool
+    requires_full_arbitration: bool
 
 ----------------------------------------------------------------------
 CleanFinding (L8 output, escalation=none)
